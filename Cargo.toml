@@ -1,0 +1,24 @@
+[package]
+name = "alchem"
+version = "0.1.0"
+authors = ["Charlie Ozinga <ozchaz@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+clap = { version = "2.33", features = ["wrap_help"] }
+ctrlc = "3.1"
+env_logger = "0.7"
+error-chain = "0.12"
+futures = "0.3"
+lazy_static = "1.4"
+log = "0.4"
+tokio = "0.2"
+
+[lib]
+name = "alchem"
+path = "src/lib.rs"
+
+[[bin]]
+name = "alchem"
+path = "src/launch.rs"
+doc = false
