@@ -54,7 +54,7 @@ impl<'s> Compiler<'s> {
   }
 
   pub fn compile(&mut self) -> Result<()> {
-    self.body()?;
+    self.block_content()?;
     self.end_compiler();
     Ok(())
   }
@@ -137,7 +137,7 @@ impl<'s> Compiler<'s> {
     Ok(())
   }
 
-  pub fn block(&mut self) -> Result<()> {
+  pub fn block_content(&mut self) -> Result<()> {
     self.begin_scope();
     self.body()?;
     self.end_scope();
@@ -175,13 +175,20 @@ impl<'s> Compiler<'s> {
 
   pub fn assignment(&mut self) -> Result<()> {
     match self.current_ttd() {
+      // Temporary to allow checking for nested blocks. Blocks should actually be allowed as expressions, except
+      // that opening an expression with '{' will compete with "object literal" expressions.
+      TokenTypeDiscr::OpenCurl => {
+        self.block()?;
+        self.emit_instr(Opcode::Pop);
+        Ok(())
+      }
       _ => {
         if self.token_check(TokenTypeDiscr::Identifier) {
-          let global = self.parse_variable()?;
+          self.parse_variable()?;
           self.consume(TokenTypeDiscr::Equals);
           self.expression()?;
           self.consume(TokenTypeDiscr::Semi);
-          self.define_variable(global);
+          self.mark_initialized();
           Ok(())
         } else {
           err!(Compile, "Unexpected assignment token {:?}", self.current)
@@ -190,25 +197,21 @@ impl<'s> Compiler<'s> {
     }
   }
 
-  pub fn parse_variable(&mut self) -> Result<usize> {
+  pub fn mark_initialized(&mut self) {
+    self.scope.mark_last_initialized();
+  }
+
+  pub fn parse_variable(&mut self) -> Result<()> {
     self.consume(TokenTypeDiscr::Identifier);
     if let TokenType::Identifier(s) = self.previous.token_type() {
       let name = s.to_string();
-      if self.scope.scope_depth() > 0 {
-        self.declare_variable(name).map(|_| 0)
-      } else {
-        Ok(self.identifier_constant(name))
-      }
+      self.declare_variable(name)
     } else {
       err!(Compile, "Unexpected token for parse variable: {:?}", self.previous)
     }
   }
 
   pub fn declare_variable(&mut self, name: String) -> Result<()> {
-    if self.scope.scope_depth() == 0 {
-      return Ok(());
-    }
-
     if self.scope.defined(&name) {
       bail!(Runtime, "Already defined variable {}", name);
     }
@@ -216,7 +219,7 @@ impl<'s> Compiler<'s> {
   }
 
   pub fn add_local(&mut self, name: String) -> Result<()> {
-    let local = Local::new(name, self.scope.scope_depth());
+    let local = Local::new(name);
     if self.scope.len() > MAX_LOCALS {
       bail!(Runtime, "Too many locals: {}", self.scope.len());
     }
@@ -224,22 +227,11 @@ impl<'s> Compiler<'s> {
     Ok(())
   }
 
-  pub fn identifier_constant(&mut self, name: String) -> usize {
-    self.current_chunk().add_constant(Value::String(name.into()))
-  }
-
-  pub fn define_variable(&mut self, global: usize) {
-    if self.scope.scope_depth() > 0 {
-      return;
-    }
-    self.emit_instr(Opcode::DefineGlobal(global));
-  }
-
   pub fn expression(&mut self) -> Result<()> { self.parse_precendence(Precedence::Or) }
 
-  pub fn curly_block(&mut self) -> Result<()> {
+  pub fn block(&mut self) -> Result<()> {
     self.consume(TokenTypeDiscr::OpenCurl);
-    self.block()?;
+    self.block_content()?;
     self.consume(TokenTypeDiscr::CloseCurl);
     Ok(())
   }
@@ -268,20 +260,29 @@ impl<'s> Compiler<'s> {
   pub fn named_variable(&mut self) -> Result<()> {
     if let TokenType::Identifier(s) = self.previous.token_type() {
       let name = s.to_string();
-      if let Some(c) = self.resolve_local(&name) {
+      if let Some(c) = self.resolve_local(&name)? {
         self.emit_instr(Opcode::GetLocal(c));
+        Ok(())
       } else {
-        let c = self.identifier_constant(name);
-        self.emit_instr(Opcode::GetGlobal(c));
+        err!(Runtime, "No variable {} could be found.", name)
       }
-      Ok(())
     } else {
       err!(Compile, "Unexpected token for named variable {:?}", self.previous)
     }
   }
 
-  pub fn resolve_local(&self, name: &str) -> Option<usize> {
-    self.scope.locals().iter().enumerate().rev().find(|(_, l)| l.name() == name).map(|(i, _)| i)
+  pub fn resolve_local(&self, name: &str) -> Result<Option<usize>> {
+    let i = self.scope.locals().iter().enumerate().rev().find(|(_, l)| l.name() == name).map(|(i, _)| i);
+    match i {
+      None => Ok(None),
+      Some(i) => {
+        if self.scope.initialized(i) {
+          Ok(Some(i))
+        } else {
+          err!(Compile, "Can't read local in its own initializer")
+        }
+      }
+    }
   }
 
   pub fn grouping(&mut self) -> Result<()> {
@@ -381,6 +382,12 @@ impl LocalStack {
   pub fn add_local(&mut self, local: Local) { self.locals.push(local); }
   pub fn len(&self) -> usize { self.locals.len() }
   pub fn is_empty(&self) -> bool { self.locals.is_empty() }
+  pub fn initialized(&self, i: usize) -> bool { self.locals[i].depth() > 0 }
+
+  pub fn mark_last_initialized(&mut self) {
+    let last = self.locals.len() - 1;
+    self.locals[last].depth = self.scope_depth;
+  }
 
   pub fn drain_depth(&mut self) -> usize {
     let orig_len = self.locals.len();
@@ -404,7 +411,7 @@ pub struct Local {
 }
 
 impl Local {
-  pub fn new(name: String, depth: u16) -> Local { Local { name, depth } }
+  pub fn new(name: String) -> Local { Local { name, depth: 0 } }
   pub fn name(&self) -> &str { &self.name }
   pub fn depth(&self) -> u16 { self.depth }
 }

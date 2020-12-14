@@ -76,9 +76,8 @@ pub enum Opcode {
   Negate,
   Not,
   Return,
-  DefineGlobal(usize),
-  GetGlobal(usize),
   GetLocal(usize),
+  Pop,
   Popout(usize)
 }
 
