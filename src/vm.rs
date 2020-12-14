@@ -4,8 +4,10 @@ use crate::compiler::compile;
 use crate::common::{Chunk, Opcode, Instr};
 use crate::value::Value;
 use crate::errors::{Result, ErrorKind};
+use std::collections::HashMap;
 
 type Stack = Vec<Value>;
+type Globals = HashMap<String, Value>;
 
 pub fn interpret(source: &str) -> Result<Value> {
   execute(compile(source)?)
@@ -19,12 +21,13 @@ pub fn execute(chunk: Chunk) -> Result<Value> {
 pub struct Vm {
   debug: bool,
   chunk: Chunk,
+  globals: Globals,
   ip: usize,
   stack: Stack
 }
 
 impl Vm {
-  pub fn init(chunk: Chunk) -> Vm { Vm { debug: true, ip: 0, chunk, stack: Vec::new() } }
+  pub fn init(chunk: Chunk) -> Vm { Vm { debug: true, ip: 0, chunk, globals: HashMap::new(), stack: Vec::new() } }
 
   pub fn run(&mut self) -> Result<Value> {
     while let Some(instr) = self.chunk.at(self.ip) {
@@ -37,7 +40,7 @@ impl Vm {
       }
 
       self.ip += 1;
-      if let Some(r) = handle_op(instr, &self.chunk, &mut self.stack, &mut self.ip)? {
+      if let Some(r) = handle_op(instr, &self.chunk, &mut self.stack, &mut self.globals, &mut self.ip)? {
         if self.debug {
           println!()
         }
@@ -53,23 +56,24 @@ fn pop(stack: &mut Stack) -> Result<Value> {
   stack.pop().ok_or_else(|| bad!(Compile, "No stack."))
 }
 
-fn handle_op(instr: &Instr, chunk: &Chunk, stack: &mut Stack, ip: &mut usize) -> Result<Option<Value>> {
-  let r = try_handle_op(instr, chunk, stack, ip);
+fn handle_op(
+  instr: &Instr, chunk: &Chunk, stack: &mut Stack, globals: &mut Globals, ip: &mut usize
+) -> Result<Option<Value>> {
+  let r = try_handle_op(instr, chunk, stack, globals, ip);
   if matches!(&r, Err(e) if matches!(e.kind(), ErrorKind::Runtime(..))) {
     println!("Error at {}: {}", instr.loc(), r.as_ref().unwrap_err());
   }
   r
 }
 
-fn try_handle_op(instr: &Instr, chunk: &Chunk, stack: &mut Stack, _ip: &mut usize) -> Result<Option<Value>> {
+fn try_handle_op(
+  instr: &Instr, chunk: &Chunk, stack: &mut Stack, globals: &mut Globals, _ip: &mut usize
+) -> Result<Option<Value>> {
   match instr.op() {
-    Opcode::Return => return Ok(Some(pop(stack)?)),
-
     Opcode::Constant(c) => {
       let lit = chunk.get_constant(*c).unwrap();
       stack.push(lit.try_clone()?);
     }
-
     Opcode::Not => unary(stack, |v| v.try_not())?,
     Opcode::Negate => unary(stack, |v| v.try_negate())?,
     Opcode::Add => binary(stack, |v, w| v.try_add(w))?,
@@ -85,6 +89,22 @@ fn try_handle_op(instr: &Instr, chunk: &Chunk, stack: &mut Stack, _ip: &mut usiz
     Opcode::Lte => binary(stack, |v, w| v.try_lte(w))?,
     Opcode::Equals => binary(stack, |v, w| v.try_eq(w))?,
     Opcode::NotEquals => binary(stack, |v, w| v.try_neq(w))?,
+    Opcode::GetLocal(g) => stack.push(stack[*g].try_clone()?),
+    Opcode::DefineGlobal(g) => {
+      let name = chunk.get_constant(*g).unwrap().as_str().unwrap();
+      globals.insert(name.to_string(), pop(stack)?);
+    }
+    Opcode::GetGlobal(g) => {
+      let name = chunk.get_constant(*g).unwrap().as_str().unwrap();
+      stack.push(globals.get(name).ok_or_else(|| bad!(Runtime, "No such varialble \"{}\".", name))?.try_clone()?);
+    }
+    Opcode::Return => return Ok(Some(Value::Bool(true))),
+    Opcode::Popout(c) => {
+      if *c > 0 {
+        stack.swap_remove(stack.len() - c - 1);
+        stack.truncate(stack.len() - c + 1);
+      }
+    }
   }
 
   Ok(None)

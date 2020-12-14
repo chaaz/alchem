@@ -76,6 +76,10 @@ pub enum Opcode {
   Negate,
   Not,
   Return,
+  DefineGlobal(usize),
+  GetGlobal(usize),
+  GetLocal(usize),
+  Popout(usize)
 }
 
 #[cfg(test)]

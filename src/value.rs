@@ -30,6 +30,13 @@ impl From<String> for Value {
 impl Value {
   pub fn cloneable(&self) -> bool { true }
 
+  pub fn as_str(&self) -> Option<&str> {
+    match self {
+      Self::String(s) => Some(s),
+      _ => None
+    }
+  }
+
   pub fn try_clone(&self) -> Result<Value> {
     if !self.cloneable() {
       bail!(Runtime, "Can't clone {:?}", self);
