@@ -37,6 +37,13 @@ impl Value {
     }
   }
 
+  pub fn try_bool(&self) -> Result<bool> {
+    match self {
+      Self::Bool(v) => Ok(*v),
+      _ => err!(Compile, "Not a boolean: {:?}", self)
+    }
+  }
+
   pub fn try_clone(&self) -> Result<Value> {
     if !self.cloneable() {
       bail!(Runtime, "Can't clone {:?}", self);

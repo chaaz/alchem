@@ -1,6 +1,7 @@
 //! Common info for the parser.
 
 use super::value::{Value, ValueArray};
+use super::errors::Result;
 
 pub struct Chunk {
   constants: ValueArray,
@@ -23,6 +24,16 @@ impl Chunk {
   pub fn code_len(&self) -> usize { self.code.len() }
   pub fn code_is_empty(&self) -> bool { self.code.is_empty() }
   pub fn at(&self, ind: usize) -> Option<&Instr> { self.code.get(ind) }
+
+  pub fn patch_jump(&mut self, ind: usize, val: u16) -> Result<()> {
+    match self.code.get_mut(ind).map(|instr| instr.op_mut()) {
+      Some(Opcode::Jump(v)) | Some(Opcode::JumpIfFalse(v)) => {
+        *v = val;
+        Ok(())
+      }
+      other => err!(Compile, "Illegal jump address: {:?}", other)
+    }
+  }
 
   pub fn constants(&self) -> &ValueArray { &self.constants }
   pub fn add_constant(&mut self, cnst: Value) -> usize { self.constants.add(cnst) }
@@ -54,6 +65,7 @@ impl Instr {
   pub fn anon(op: Opcode) -> Instr { Instr { loc: 0, op } }
   pub fn loc(&self) -> usize { self.loc }
   pub fn op(&self) -> &Opcode { &self.op }
+  pub fn op_mut(&mut self) -> &mut Opcode { &mut self.op }
 }
 
 // TODO: force into u8
@@ -78,7 +90,14 @@ pub enum Opcode {
   Return,
   GetLocal(usize),
   Pop,
-  Popout(usize)
+  Popout(usize),
+  JumpIfFalse(u16),
+  Jump(u16)
+}
+
+impl Opcode {
+  pub fn initial_jump_if_false() -> Opcode { Self::JumpIfFalse(0) }
+  pub fn initial_jump() -> Opcode { Self::Jump(0) }
 }
 
 #[cfg(test)]

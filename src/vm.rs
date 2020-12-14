@@ -53,6 +53,10 @@ fn pop(stack: &mut Stack) -> Result<Value> {
   stack.pop().ok_or_else(|| bad!(Compile, "No stack."))
 }
 
+fn peek(stack: &mut Stack) -> Result<&Value> {
+  stack.last().ok_or_else(|| bad!(Compile, "No stack."))
+}
+
 fn handle_op(
   instr: &Instr, chunk: &Chunk, stack: &mut Stack, ip: &mut usize
 ) -> Result<Option<Value>> {
@@ -64,7 +68,7 @@ fn handle_op(
 }
 
 fn try_handle_op(
-  instr: &Instr, chunk: &Chunk, stack: &mut Stack, _ip: &mut usize
+  instr: &Instr, chunk: &Chunk, stack: &mut Stack, ip: &mut usize
 ) -> Result<Option<Value>> {
   match instr.op() {
     Opcode::Constant(c) => {
@@ -87,8 +91,14 @@ fn try_handle_op(
     Opcode::Equals => binary(stack, |v, w| v.try_eq(w))?,
     Opcode::NotEquals => binary(stack, |v, w| v.try_neq(w))?,
     Opcode::GetLocal(g) => stack.push(stack[*g].try_clone()?),
-    Opcode::Return => return Ok(Some(Value::Bool(true))),
+    Opcode::Jump(offset) => *ip += *offset as usize,
+    Opcode::JumpIfFalse(offset) => {
+      if !peek(stack)?.try_bool()? {
+        *ip += *offset as usize
+      }
+    }
     Opcode::Pop => drop(stack.pop()),
+    Opcode::Return => return Ok(Some(Value::Bool(true))),
     Opcode::Popout(c) => {
       if *c > 0 {
         stack.swap_remove(stack.len() - c - 1);

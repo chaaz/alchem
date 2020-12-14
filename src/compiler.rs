@@ -8,6 +8,8 @@ use lazy_static::lazy_static;
 use std::collections::HashMap;
 use std::str::FromStr;
 
+type Jump = usize;
+
 const MAX_CONSTANTS: usize = 255;
 const MAX_LOCALS: usize = 255;
 
@@ -105,6 +107,16 @@ impl<'s> Compiler<'s> {
   pub fn emit_instr(&mut self, code: Opcode) {
     let line = self.last_line;
     self.current_chunk().add_instr(Instr::new(code, line));
+  }
+
+  pub fn emit_jump(&mut self, code: Opcode) -> Jump {
+    self.emit_instr(code);
+    self.current_chunk().code_len() - 1
+  }
+
+  pub fn patch_jump(&mut self, offset: Jump) -> Result<()> {
+    let jump = (self.current_chunk().code_len() - offset - 1) as u16;
+    self.current_chunk().patch_jump(offset, jump)
   }
 
   pub fn current_chunk(&mut self) -> &mut Chunk { &mut self.target }
@@ -291,6 +303,36 @@ impl<'s> Compiler<'s> {
     Ok(())
   }
 
+  pub fn if_block(&mut self) -> Result<()> {
+    self.expression()?;
+    let false_jump = self.emit_jump(Opcode::initial_jump_if_false());
+    self.emit_instr(Opcode::Pop);
+    self.block()?;
+    let done_jump = self.emit_jump(Opcode::initial_jump());
+    self.patch_jump(false_jump)?;
+    self.emit_instr(Opcode::Pop);
+
+    let mut d2_jumps = Vec::new();
+    while let TokenTypeDiscr::ElseifWord = self.current_ttd() {
+      self.consume(TokenTypeDiscr::ElseifWord);
+      self.expression()?;
+      let f2_jump = self.emit_jump(Opcode::initial_jump_if_false());
+      self.emit_instr(Opcode::Pop);
+      self.block()?;
+      d2_jumps.push(self.emit_jump(Opcode::initial_jump()));
+      self.patch_jump(f2_jump)?;
+      self.emit_instr(Opcode::Pop);
+    }
+
+    self.consume(TokenTypeDiscr::ElseWord);
+    self.block()?;
+    self.patch_jump(done_jump)?;
+    for jump in d2_jumps {
+      self.patch_jump(jump)?;
+    }
+    Ok(())
+  }
+
   pub fn unary(&mut self) -> Result<()> {
     let ttd = self.previous_ttd();
     self.parse_precendence(Precedence::Unary)?;
@@ -321,11 +363,25 @@ impl<'s> Compiler<'s> {
       TokenTypeDiscr::Lte => self.emit_instr(Opcode::Lte),
       TokenTypeDiscr::DoubleEq => self.emit_instr(Opcode::Equals),
       TokenTypeDiscr::NotEq => self.emit_instr(Opcode::NotEquals),
-      TokenTypeDiscr::DoubleAnd => self.emit_instr(Opcode::And),
-      TokenTypeDiscr::DoubleOr => self.emit_instr(Opcode::Or),
       other => bail!(Compile, "Unexpected binary op: {:?}", other)
     }
     Ok(())
+  }
+
+  pub fn and(&mut self) -> Result<()> {
+    let end_jump = self.emit_jump(Opcode::initial_jump_if_false());
+    self.emit_instr(Opcode::Pop);
+    self.parse_precendence(Precedence::And)?;
+    self.patch_jump(end_jump)
+  }
+
+  pub fn or(&mut self) -> Result<()> {
+    let else_jump = self.emit_jump(Opcode::initial_jump_if_false());
+    let end_jump = self.emit_jump(Opcode::initial_jump());
+    self.patch_jump(else_jump)?;
+    self.emit_instr(Opcode::Pop);
+    self.parse_precendence(Precedence::Or)?;
+    self.patch_jump(end_jump)
   }
 
   fn get_rule(&self, tt: TokenTypeDiscr) -> Result<&Rule> {
@@ -418,9 +474,12 @@ impl Local {
 
 pub fn variable(compiler: &mut Compiler) -> Result<()> { compiler.variable() }
 pub fn binary(compiler: &mut Compiler) -> Result<()> { compiler.binary() }
+pub fn and(compiler: &mut Compiler) -> Result<()> { compiler.and() }
+pub fn or(compiler: &mut Compiler) -> Result<()> { compiler.or() }
 pub fn unary(compiler: &mut Compiler) -> Result<()> { compiler.unary() }
 pub fn literal(compiler: &mut Compiler) -> Result<()> { compiler.literal() }
 pub fn grouping(compiler: &mut Compiler) -> Result<()> { compiler.grouping() }
+pub fn if_block(compiler: &mut Compiler) -> Result<()> { compiler.if_block() }
 
 pub fn to_value<V>(v: &str) -> Result<Value>
 where
@@ -531,8 +590,8 @@ fn construct_rules() -> HashMap<TokenTypeDiscr, Rule> {
   rules.insert(TokenTypeDiscr::CloseCurl, Rule::new(None, None, Precedence::None));
   rules.insert(TokenTypeDiscr::OpenSquare, Rule::new(None, None, Precedence::None));
   rules.insert(TokenTypeDiscr::CloseSquare, Rule::new(None, None, Precedence::None));
-  rules.insert(TokenTypeDiscr::DoubleAnd, Rule::new(None, Some(binary), Precedence::And));
-  rules.insert(TokenTypeDiscr::DoubleOr, Rule::new(None, Some(binary), Precedence::Or));
+  rules.insert(TokenTypeDiscr::DoubleAnd, Rule::new(None, Some(and), Precedence::And));
+  rules.insert(TokenTypeDiscr::DoubleOr, Rule::new(None, Some(or), Precedence::Or));
   rules.insert(TokenTypeDiscr::Gt, Rule::new(None, Some(binary), Precedence::Comparison));
   rules.insert(TokenTypeDiscr::Lt, Rule::new(None, Some(binary), Precedence::Comparison));
   rules.insert(TokenTypeDiscr::Gte, Rule::new(None, Some(binary), Precedence::Comparison));
@@ -550,7 +609,7 @@ fn construct_rules() -> HashMap<TokenTypeDiscr, Rule> {
   rules.insert(TokenTypeDiscr::Dot, Rule::new(None, Some(binary), Precedence::Call));
   rules.insert(TokenTypeDiscr::FnWord, Rule::new(None, None, Precedence::None));
   rules.insert(TokenTypeDiscr::FnAsyncWord, Rule::new(None, None, Precedence::None));
-  rules.insert(TokenTypeDiscr::IfWord, Rule::new(None, None, Precedence::None));
+  rules.insert(TokenTypeDiscr::IfWord, Rule::new(Some(if_block), None, Precedence::None));
   rules.insert(TokenTypeDiscr::ElseifWord, Rule::new(None, None, Precedence::None));
   rules.insert(TokenTypeDiscr::ElseWord, Rule::new(None, None, Precedence::None));
   rules.insert(TokenTypeDiscr::TrueLit, Rule::new(Some(literal), None, Precedence::None));
