@@ -1,7 +1,7 @@
 //! The alchem compiler.
 
 use crate::errors::{Result, Error};
-use crate::common::{Chunk, Instr, Opcode};
+use crate::common::{Chunk, Instr, Opcode, Function};
 use crate::scanner::{Scanner, Token, TokenType, TokenTypeDiscr};
 use crate::value::Value;
 use lazy_static::lazy_static;
@@ -10,20 +10,19 @@ use std::str::FromStr;
 
 type Jump = usize;
 
-const MAX_CONSTANTS: usize = 255;
-const MAX_LOCALS: usize = 255;
+pub const MAX_LOCALS: usize = 255;
 
 lazy_static! {
   static ref RULES: HashMap<TokenTypeDiscr, Rule> = construct_rules();
 }
 
-pub fn compile(source: &str) -> Result<Chunk> {
+pub fn compile(source: &str) -> Result<Function> {
   let scanner = Scanner::new(source);
 
-  let mut compiler = Compiler::new(scanner);
-  compiler.compile()?;
+  let compiler = Compiler::new(scanner);
+  let function = compiler.compile()?;
 
-  Ok(compiler.into_chunk())
+  Ok(function)
 }
 
 pub struct Compiler<'s> {
@@ -33,9 +32,8 @@ pub struct Compiler<'s> {
   scanner: Scanner<'s>,
   had_error: bool,
   panic_mode: bool,
-  target: Chunk,
   debug: bool,
-  scope: LocalStack
+  scope: Vec<LocalStack>
 }
 
 impl<'s> Compiler<'s> {
@@ -47,21 +45,28 @@ impl<'s> Compiler<'s> {
       scanner,
       had_error: false,
       panic_mode: false,
-      target: Chunk::new(),
       debug: true,
-      scope: LocalStack::new()
+      scope: vec![LocalStack::init(FunctionType::Script)]
     };
     compiler.advance();
     compiler
   }
 
-  pub fn compile(&mut self) -> Result<()> {
-    self.block_content()?;
-    self.end_compiler();
-    Ok(())
-  }
+  pub fn scope_mut(&mut self) -> &mut LocalStack { self.scope.last_mut().unwrap() }
+  pub fn scope(&self) -> &LocalStack { self.scope.last().unwrap() }
+  pub fn scope_function(&self) -> &Function { self.scope.last().unwrap().function() }
+  pub fn scope_function_mut(&mut self) -> &mut Function { self.scope.last_mut().unwrap().function_mut() }
 
-  pub fn into_chunk(self) -> Chunk { self.target }
+  pub fn compile(mut self) -> Result<Function> {
+    self.begin_scope();
+    self.body()?;
+    self.emit_instr(Opcode::Return);
+
+    if self.had_error {
+      bail!(Compile, "previous errors.");
+    }
+    Ok(self.end_compiler())
+  }
 
   pub fn advance(&mut self) {
     let next = self.next_token();
@@ -119,14 +124,24 @@ impl<'s> Compiler<'s> {
     self.current_chunk().patch_jump(offset, jump)
   }
 
-  pub fn current_chunk(&mut self) -> &mut Chunk { &mut self.target }
+  pub fn current_chunk(&mut self) -> &mut Chunk { self.scope_mut().function.chunk_mut() }
 
-  pub fn end_compiler(&mut self) {
-    self.emit_instr(Opcode::Return);
+  pub fn end_compiler(mut self) -> Function {
+    debug_assert_eq!(self.scope.len(), 1);
+    self.pop_scope()
+  }
+
+  pub fn push_scope(&mut self) {
+    self.scope.push(LocalStack::init(FunctionType::Function));
+  }
+
+  pub fn pop_scope(&mut self) -> Function {
+    let scope = self.scope.pop().unwrap();
     if self.debug && !self.had_error {
-      println!("Compiled code:");
-      self.current_chunk().debug();
+      println!("\nCompiled code ({}):", scope.function().smart_name());
+      scope.function.chunk().debug();
     }
+    scope.function
   }
 
   pub fn body(&mut self) -> Result<()> {
@@ -157,12 +172,12 @@ impl<'s> Compiler<'s> {
   }
 
   pub fn begin_scope(&mut self) {
-    self.scope.incr_depth();
+    self.scope_mut().incr_depth();
   }
 
   pub fn end_scope(&mut self) {
-    self.scope.decr_depth();
-    let drain_depth = self.scope.drain_depth();
+    self.scope_mut().decr_depth();
+    let drain_depth = self.scope_mut().drain_depth();
     self.emit_instr(Opcode::Popout(drain_depth));
   }
 
@@ -210,7 +225,7 @@ impl<'s> Compiler<'s> {
   }
 
   pub fn mark_initialized(&mut self) {
-    self.scope.mark_last_initialized();
+    self.scope_mut().mark_last_initialized();
   }
 
   pub fn parse_variable(&mut self) -> Result<()> {
@@ -224,7 +239,7 @@ impl<'s> Compiler<'s> {
   }
 
   pub fn declare_variable(&mut self, name: String) -> Result<()> {
-    if self.scope.defined(&name) {
+    if self.scope().defined(&name) {
       bail!(Runtime, "Already defined variable {}", name);
     }
     self.add_local(name)
@@ -232,10 +247,10 @@ impl<'s> Compiler<'s> {
 
   pub fn add_local(&mut self, name: String) -> Result<()> {
     let local = Local::new(name);
-    if self.scope.len() > MAX_LOCALS {
-      bail!(Runtime, "Too many locals: {}", self.scope.len());
+    if self.scope().len() > MAX_LOCALS {
+      bail!(Runtime, "Too many locals: {}", self.scope().len());
     }
-    self.scope.add_local(local);
+    self.scope_mut().add_local(local);
     Ok(())
   }
 
@@ -276,7 +291,9 @@ impl<'s> Compiler<'s> {
         self.emit_instr(Opcode::GetLocal(c));
         Ok(())
       } else {
-        err!(Runtime, "No variable {} could be found.", name)
+        let cc = self.add_constant(name.into())?;
+        self.emit_instr(Opcode::GetGlobal(cc));
+        Ok(())
       }
     } else {
       err!(Compile, "Unexpected token for named variable {:?}", self.previous)
@@ -284,11 +301,11 @@ impl<'s> Compiler<'s> {
   }
 
   pub fn resolve_local(&self, name: &str) -> Result<Option<usize>> {
-    let i = self.scope.locals().iter().enumerate().rev().find(|(_, l)| l.name() == name).map(|(i, _)| i);
+    let i = self.scope().locals().iter().enumerate().rev().find(|(_, l)| l.name() == name).map(|(i, _)| i);
     match i {
       None => Ok(None),
       Some(i) => {
-        if self.scope.initialized(i) {
+        if self.scope().initialized(i) {
           Ok(Some(i))
         } else {
           err!(Compile, "Can't read local in its own initializer")
@@ -331,6 +348,69 @@ impl<'s> Compiler<'s> {
       self.patch_jump(jump)?;
     }
     Ok(())
+  }
+
+  pub fn fn_sync(&mut self) -> Result<()> {
+    self.push_scope();
+    self.begin_scope();
+
+    self.consume(TokenTypeDiscr::OpenParen);
+    let mut separated = true;
+    while self.current_ttd() != TokenTypeDiscr::CloseParen {
+      let arity = self.scope_function().arity();
+      if !separated {
+        bail!(Compile, "Missing comma after parameter {}.", arity - 1);
+      }
+      if arity == 255 {
+        bail!(Runtime, "More than {} parameters.", self.scope_function().arity())
+      }
+      self.scope_function_mut().incr_arity();
+      self.parse_variable()?;
+      self.mark_initialized();
+
+      separated = false;
+      if self.current_ttd() == TokenTypeDiscr::Comma {
+        self.consume(TokenTypeDiscr::Comma);
+        separated = true;
+      }
+    }
+    self.consume(TokenTypeDiscr::CloseParen);
+    self.consume(TokenTypeDiscr::OpenCurl);
+    self.body()?;
+    self.consume(TokenTypeDiscr::CloseCurl);
+    self.emit_instr(Opcode::Return);
+
+    let function = self.pop_scope();
+    self.emit_value(function.into())
+  }
+
+  pub fn call(&mut self) -> Result<()> {
+    let arg_count = self.argument_list()?;
+    self.emit_instr(Opcode::Call(arg_count));
+    Ok(())
+  }
+
+  pub fn argument_list(&mut self) -> Result<u8> {
+    let mut count = 0;
+    let mut separated = true;
+    while self.current_ttd() != TokenTypeDiscr::CloseParen {
+      if count == 255 {
+        bail!(Compile, "More than {} function arguments.", count);
+      }
+      if !separated {
+        bail!(Compile, "Missing comma after argument.");
+      }
+      self.expression()?;
+      count += 1;
+
+      separated = false;
+      if self.current_ttd() == TokenTypeDiscr::Comma {
+        self.consume(TokenTypeDiscr::Comma);
+        separated = true;
+      }
+    }
+    self.consume(TokenTypeDiscr::CloseParen);
+    Ok(count)
   }
 
   pub fn unary(&mut self) -> Result<()> {
@@ -394,12 +474,13 @@ impl<'s> Compiler<'s> {
   fn current_ttd(&self) -> TokenTypeDiscr { self.current.token_type().discr() }
 
   pub fn emit_value(&mut self, v: Value) -> Result<()> {
-    let cc = self.current_chunk().add_constant(v);
-    if cc > MAX_CONSTANTS {
-      bail!(Compile, "Too many constants in one chunk: {}", cc);
-    }
+    let cc = self.add_constant(v)?;
     self.emit_instr(Opcode::Constant(cc));
     Ok(())
+  }
+
+  pub fn add_constant(&mut self, v: Value) -> Result<usize> {
+    self.current_chunk().add_constant(v)
   }
 
   fn parse_precendence(&mut self, prec: Precedence) -> Result<()> {
@@ -421,16 +502,22 @@ impl<'s> Compiler<'s> {
 }
 
 pub struct LocalStack {
+  function: Function,
+  function_type: FunctionType,
   locals: Vec<Local>,
   scope_depth: u16
 }
 
-impl Default for LocalStack {
-  fn default() -> LocalStack { LocalStack::new() }
+pub enum FunctionType {
+  Function,
+  Script
 }
 
 impl LocalStack {
-  pub fn new() -> LocalStack { LocalStack { locals: Vec::new(), scope_depth: 0 } }
+  pub fn init(function_type: FunctionType) -> LocalStack {
+    LocalStack { function: Function::new(), function_type, locals: vec![Local::new(String::new())], scope_depth: 0 }
+  }
+
   pub fn locals(&self) -> &[Local] { &self.locals }
   pub fn scope_depth(&self) -> u16 { self.scope_depth }
   pub fn incr_depth(&mut self) { self.scope_depth += 1; }
@@ -439,6 +526,9 @@ impl LocalStack {
   pub fn len(&self) -> usize { self.locals.len() }
   pub fn is_empty(&self) -> bool { self.locals.is_empty() }
   pub fn initialized(&self, i: usize) -> bool { self.locals[i].depth() > 0 }
+  pub fn function_type(&self) -> &FunctionType { &self.function_type }
+  pub fn function(&self) -> &Function { &self.function }
+  pub fn function_mut(&mut self) -> &mut Function { &mut self.function }
 
   pub fn mark_last_initialized(&mut self) {
     let last = self.locals.len() - 1;
@@ -480,6 +570,8 @@ pub fn unary(compiler: &mut Compiler) -> Result<()> { compiler.unary() }
 pub fn literal(compiler: &mut Compiler) -> Result<()> { compiler.literal() }
 pub fn grouping(compiler: &mut Compiler) -> Result<()> { compiler.grouping() }
 pub fn if_block(compiler: &mut Compiler) -> Result<()> { compiler.if_block() }
+pub fn fn_sync(compiler: &mut Compiler) -> Result<()> { compiler.fn_sync() }
+pub fn call(compiler: &mut Compiler) -> Result<()> { compiler.call() }
 
 pub fn to_value<V>(v: &str) -> Result<Value>
 where
@@ -604,10 +696,10 @@ fn construct_rules() -> HashMap<TokenTypeDiscr, Rule> {
   rules.insert(TokenTypeDiscr::Slash, Rule::new(None, Some(binary), Precedence::Factor));
   rules.insert(TokenTypeDiscr::Percent, Rule::new(None, Some(binary), Precedence::Factor));
   rules.insert(TokenTypeDiscr::Bang, Rule::new(Some(unary), None, Precedence::Unary));
-  rules.insert(TokenTypeDiscr::OpenParen, Rule::new(Some(grouping), None, Precedence::None));
+  rules.insert(TokenTypeDiscr::OpenParen, Rule::new(Some(grouping), Some(call), Precedence::Call));
   rules.insert(TokenTypeDiscr::CloseParen, Rule::new(None, None, Precedence::None));
   rules.insert(TokenTypeDiscr::Dot, Rule::new(None, Some(binary), Precedence::Call));
-  rules.insert(TokenTypeDiscr::FnWord, Rule::new(None, None, Precedence::None));
+  rules.insert(TokenTypeDiscr::FnWord, Rule::new(Some(fn_sync), None, Precedence::None));
   rules.insert(TokenTypeDiscr::FnAsyncWord, Rule::new(None, None, Precedence::None));
   rules.insert(TokenTypeDiscr::IfWord, Rule::new(Some(if_block), None, Precedence::None));
   rules.insert(TokenTypeDiscr::ElseifWord, Rule::new(None, None, Precedence::None));

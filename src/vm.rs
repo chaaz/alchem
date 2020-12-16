@@ -1,51 +1,128 @@
 //! The actual VM for parsing the bytecode.
 
 use crate::compiler::compile;
-use crate::common::{Chunk, Opcode, Instr};
+use crate::common::{Chunk, Opcode, Instr, Function, Native};
 use crate::value::Value;
-use crate::errors::{Result, ErrorKind};
+use crate::errors::Result;
+use std::sync::Arc;
+use std::cmp::{min, max};
+use std::collections::HashMap;
+
+const FRAMES_MAX: usize = 255;
 
 type Stack = Vec<Value>;
-
-pub fn interpret(source: &str) -> Result<Value> {
-  execute(compile(source)?)
-}
-
-pub fn execute(chunk: Chunk) -> Result<Value> {
-  let mut vm = Vm::init(chunk);
-  vm.run()
-}
+type CallStack = Vec<CallFrame>;
+type Globals = HashMap<String, Value>;
 
 pub struct Vm {
   debug: bool,
-  chunk: Chunk,
-  ip: usize,
-  stack: Stack
+  call_stack: CallStack,
+  stack: Stack,
+  globals: Globals
+}
+
+impl Default for Vm {
+  fn default() -> Vm { Vm::new() }
 }
 
 impl Vm {
-  pub fn init(chunk: Chunk) -> Vm { Vm { debug: true, ip: 0, chunk, stack: Vec::new() } }
+  pub fn new() -> Vm { Vm { debug: true, call_stack: Vec::new(), stack: Vec::new(), globals: HashMap::new() } }
+
+  pub fn add_native(&mut self, name: impl ToString, native: Native) {
+    self.globals.insert(name.to_string(), Value::Native(native));
+  }
+
+  pub fn interpret(&mut self, source: &str) -> Result<Value> {
+    debug_assert_eq!(self.stack.len(), 0);
+    debug_assert_eq!(self.call_stack.len(), 0);
+
+    // last minute code changes
+    let function = compile(source)?;
+
+    // lock it in
+    let function = Arc::new(function);
+
+    self.stack.push(function.clone().into());
+    call(function, 0, self.stack.len())?.perform(&mut self.call_stack);
+
+    self.run()
+  }
 
   pub fn run(&mut self) -> Result<Value> {
-    while let Some(instr) = self.chunk.at(self.ip) {
-      if self.debug {
-        println!("Stack: ");
-        for (i, v) in self.stack.iter().enumerate().rev() {
-          println!("  {:>0width$} : {:?}", i, v, width=4);
-        }
-        println!("Executing {:>04}: {:?}", self.ip, instr);
-      }
+    let r = self.try_run();
+    if r.is_err() {
+      self.debug_stack_trace();
+    }
+    r
+  }
 
-      self.ip += 1;
-      if let Some(r) = handle_op(instr, &self.chunk, &mut self.stack, &mut self.ip)? {
-        if self.debug {
-          println!()
+  pub fn try_run(&mut self) -> Result<Value> {
+    let Vm { debug, call_stack, stack, globals } = self;
+
+    debug_start(*debug);
+
+    'outer: loop {
+      let frame = call_stack.last_mut().unwrap();
+      let (ip, chunk, slots) = frame.parts();
+
+      loop {
+        match chunk.at(*ip) {
+          None => break 'outer,
+          Some(instr) => {
+            debug_instr(*debug, stack, *ip, instr);
+            *ip += 1;
+            if let Some(stack_op) = handle_op(instr, globals, chunk, slots, stack, ip)? {
+              stack_op.perform(call_stack);
+              if call_stack.len() > FRAMES_MAX {
+                bail!(Runtime, "Stack overflow: {}.", call_stack.len());
+              }
+              if call_stack.is_empty() {
+                debug_end(*debug, stack);
+                return Ok(pop(stack)?);
+              }
+              break;
+            }
+          }
         }
-        return Ok(r);
       }
     }
+    debug_end(*debug, stack);
+    bail!(Runtime, "Missing return.");
+  }
 
-    err!(Compile, "No return.")
+  fn debug_stack_trace(&self) {
+    println!("\nRuntime error:");
+    for frame in self.call_stack.iter().rev() {
+      let function = frame.function();
+      let ip = max(1, min(function.chunk().code_len(), frame.ip()));
+      let instr = function.chunk().at(ip - 1).unwrap();
+      println!("  at {} in {}: {:?}", instr.loc(), function.smart_name(), instr);
+    }
+  }
+}
+
+fn debug_start(debug: bool) {
+  if debug {
+    println!();
+  }
+}
+
+fn debug_instr(debug: bool, stack: &[Value], ip: usize, instr: &Instr) {
+  if debug {
+    println!("Stack: ");
+    for (i, v) in stack.iter().enumerate().rev() {
+      println!("  {:>0width$} : {:?}", i, v, width=4);
+    }
+    println!("Executing {:>04}: {:?}", ip, instr);
+  }
+}
+
+fn debug_end(debug: bool, stack: &[Value]) {
+  if debug {
+    println!("Final Stack: ");
+    for (i, v) in stack.iter().enumerate().rev() {
+      println!("  {:>0width$} : {:?}", i, v, width=4);
+    }
   }
 }
 
@@ -57,19 +134,17 @@ fn peek(stack: &mut Stack) -> Result<&Value> {
   stack.last().ok_or_else(|| bad!(Compile, "No stack."))
 }
 
-fn handle_op(
-  instr: &Instr, chunk: &Chunk, stack: &mut Stack, ip: &mut usize
-) -> Result<Option<Value>> {
-  let r = try_handle_op(instr, chunk, stack, ip);
-  if matches!(&r, Err(e) if matches!(e.kind(), ErrorKind::Runtime(..))) {
-    println!("Error at {}: {}", instr.loc(), r.as_ref().unwrap_err());
+fn rpeek(stack: &mut Stack, back: usize) -> Result<&Value> {
+  if stack.len() > back {
+    Ok(stack.get(stack.len() - 1 - back).unwrap())
+  } else {
+    err!(Compile, "Not enough stack.")
   }
-  r
 }
 
-fn try_handle_op(
-  instr: &Instr, chunk: &Chunk, stack: &mut Stack, ip: &mut usize
-) -> Result<Option<Value>> {
+fn handle_op(
+  instr: &Instr, globals: &Globals, chunk: &Chunk, slots: &usize, stack: &mut Stack, ip: &mut usize
+) -> Result<Option<StackOp>> {
   match instr.op() {
     Opcode::Constant(c) => {
       let lit = chunk.get_constant(*c).unwrap();
@@ -90,7 +165,11 @@ fn try_handle_op(
     Opcode::Lte => binary(stack, |v, w| v.try_lte(w))?,
     Opcode::Equals => binary(stack, |v, w| v.try_eq(w))?,
     Opcode::NotEquals => binary(stack, |v, w| v.try_neq(w))?,
-    Opcode::GetLocal(g) => stack.push(stack[*g].try_clone()?),
+    Opcode::GetLocal(l) => stack.push(stack[*l + *slots].try_clone()?),
+    Opcode::GetGlobal(l) => {
+      let name = chunk.get_constant(*l).unwrap().as_str().unwrap();
+      stack.push(globals.get(name).ok_or_else(|| bad!(Runtime, "No such variable \"{}\".", name))?.try_clone()?);
+    }
     Opcode::Jump(offset) => *ip += *offset as usize,
     Opcode::JumpIfFalse(offset) => {
       if !peek(stack)?.try_bool()? {
@@ -98,15 +177,59 @@ fn try_handle_op(
       }
     }
     Opcode::Pop => drop(stack.pop()),
-    Opcode::Return => return Ok(Some(Value::Bool(true))),
     Opcode::Popout(c) => {
       if *c > 0 {
         stack.swap_remove(stack.len() - c - 1);
         stack.truncate(stack.len() - c + 1);
       }
     }
+    Opcode::Call(argc) => return call_value(stack, *argc),
+    Opcode::Return => {
+      stack.swap_remove(*slots);
+      stack.truncate(slots + 1);
+      return Ok(Some(StackOp::Pop));
+    }
   }
 
+  Ok(None)
+}
+
+enum StackOp {
+  Push(CallFrame),
+  Pop,
+}
+
+impl StackOp {
+  pub fn perform(self, call_stack: &mut CallStack) {
+    match self {
+      Self::Push(f) => call_stack.push(f),
+      Self::Pop => drop(call_stack.pop())
+    }
+  }
+}
+
+fn call_value(stack: &mut Stack, argc: u8) -> Result<Option<StackOp>> {
+  let value = rpeek(stack, argc as usize)?;
+  match value {
+    Value::Function(f) => Ok(Some(call(f.clone(), argc, stack.len())?)),
+    Value::Native(f) => call_native(*f, argc, stack),
+    other => err!(Runtime, "Not a function: {:?}", other)
+  }
+}
+
+fn call(function: Arc<Function>, argc: u8, stack_len: usize) -> Result<StackOp> {
+  if argc != function.arity() {
+    bail!(Runtime, "Calling arity {} with {} args.", function.arity(), argc);
+  }
+  Ok(StackOp::Push(CallFrame::new(function, stack_len - (argc as usize) - 1)))
+}
+
+fn call_native(native: Native, argc: u8, stack: &mut Stack) -> Result<Option<StackOp>> {
+  let argc = argc as usize;
+  let result = (native)(&stack[stack.len() - argc ..])?;
+  let rem = stack.len() - argc;
+  stack.truncate(rem);
+  *stack.get_mut(rem - 1).unwrap() = result;
   Ok(None)
 }
 
@@ -121,6 +244,25 @@ fn binary<F: FnOnce(Value, Value) -> Result<Value>>(stack: &mut Stack, f: F) -> 
   let v2 = pop(stack)?;
   stack.push(f(v2, v1)?);
   Ok(())
+}
+
+pub struct CallFrame {
+  function: Arc<Function>,
+  ip: usize,
+  slots: usize
+}
+
+impl CallFrame {
+  pub fn new(function: Arc<Function>, slots: usize) -> CallFrame {
+    CallFrame { function, ip: 0, slots }
+  }
+
+  pub fn function(&self) -> &Function { &self.function }
+  pub fn ip(&self) -> usize { self.ip }
+  pub fn ip_mut(&mut self) -> &mut usize { &mut self.ip }
+  pub fn slots(&self) -> usize { self.slots }
+  pub fn slots_mut(&mut self) -> &mut usize { &mut self.slots }
+  pub fn parts(&mut self) -> (&mut usize, &Chunk, &usize) { (&mut self.ip, &self.function.chunk(), &self.slots) }
 }
 
 #[cfg(test)]

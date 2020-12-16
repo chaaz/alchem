@@ -1,14 +1,32 @@
 //! The values representable in our language.
 
 use crate::errors::Result;
+use crate::common::{Function, Native};
 use std::sync::Arc;
+use std::fmt;
 
-#[derive(Debug, PartialEq)]
+const MAX_CONSTANTS: usize = 255;
+
 pub enum Value {
   Float(f64),
   Int(i32),
   Bool(bool),
-  String(Arc<str>)
+  String(Arc<str>),
+  Function(Arc<Function>),
+  Native(Native)
+}
+
+impl fmt::Debug for Value {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    match self {
+      Self::Float(v) => write!(f, "{}", v),
+      Self::Int(v) => write!(f, "{}", v),
+      Self::Bool(v) => write!(f, "{}", v),
+      Self::String(v) => write!(f, "\"{}\"", v),
+      Self::Function(v) => write!(f, "{:?}", v),
+      Self::Native(_) => write!(f, "(native)")
+    }
+  }
 }
 
 impl From<i32> for Value {
@@ -25,6 +43,14 @@ impl From<bool> for Value {
 
 impl From<String> for Value {
   fn from(v: String) -> Value { Value::String(v.into()) }
+}
+
+impl From<Function> for Value {
+  fn from(v: Function) -> Value { Value::Function(Arc::new(v)) }
+}
+
+impl From<Arc<Function>> for Value {
+  fn from(v: Arc<Function>) -> Value { Value::Function(v) }
 }
 
 impl Value {
@@ -44,6 +70,13 @@ impl Value {
     }
   }
 
+  pub fn try_function(&self) -> Result<Arc<Function>> {
+    match self {
+      Self::Function(f) => Ok(f.clone()),
+      _ => err!(Compile, "Not a function: {:?}", self)
+    }
+  }
+
   pub fn try_clone(&self) -> Result<Value> {
     if !self.cloneable() {
       bail!(Runtime, "Can't clone {:?}", self);
@@ -53,7 +86,9 @@ impl Value {
       Self::Float(v) => Ok(Self::Float(*v)),
       Self::Int(v) => Ok(Self::Int(*v)),
       Self::Bool(v) => Ok(Self::Bool(*v)),
-      Self::String(v) => Ok(Self::String(v.clone()))
+      Self::String(v) => Ok(Self::String(v.clone())),
+      Self::Function(v) => Ok(Self::Function(v.clone())),
+      Self::Native(v) => Ok(Self::Native(*v))
     }
   }
 
@@ -199,9 +234,12 @@ impl ValueArray {
   pub fn get(&self, ind: usize) -> Option<&Value> { self.values.get(ind) }
   pub fn iter(&self) -> impl Iterator<Item = &Value> { self.values.iter() }
 
-  pub fn add(&mut self, v: Value) -> usize {
+  pub fn add(&mut self, v: Value) -> Result<usize> {
     self.values.push(v);
-    self.values.len() - 1
+    if self.len() > MAX_CONSTANTS {
+      bail!(Compile, "Too many constants in one chunk: {}", self.len());
+    }
+    Ok(self.len() - 1)
   }
 }
 

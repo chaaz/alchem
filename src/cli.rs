@@ -2,7 +2,7 @@
 
 use clap::{crate_version, App, AppSettings, Arg, ArgMatches};
 use alchem::errors::Result;
-use alchem::vm::interpret;
+use alchem::vm::Vm;
 use alchem::value::Value;
 use std::io::{self, BufRead};
 
@@ -36,15 +36,25 @@ async fn parse_matches(m: ArgMatches<'_>) -> Result<()> {
 
 async fn run_file(input: &str) -> Result<Value> {
   let val = std::fs::read_to_string(input)?;
-  interpret(&val)
+  let mut vm = Vm::new();
+  vm.interpret(&val)
 }
 
 async fn repl() -> Result<()> {
+  let mut vm = Vm::new();
+  vm.add_native("print", print);
+
   let stdin = io::stdin();
   for line in stdin.lock().lines() {
     let line = line?;
-    let _value = interpret(&line)?;
+    let value = vm.interpret(&line)?;
+    println!("\nResult:\n= {:?}\n", value);
   }
-  println!("done");
+  println!("Done.");
   Ok(())
+}
+
+fn print(vals: &[Value]) -> Result<Value> {
+  println!("*** PRINT: {:?}", vals[0]);
+  Ok(Value::Int(1))
 }
