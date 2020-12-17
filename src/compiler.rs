@@ -1,7 +1,7 @@
 //! The alchem compiler.
 
 use crate::errors::{Result, Error};
-use crate::common::{Chunk, Instr, Opcode, Function};
+use crate::common::{Chunk, Instr, Opcode, Function, Upval};
 use crate::scanner::{Scanner, Token, TokenType, TokenTypeDiscr};
 use crate::value::Value;
 use lazy_static::lazy_static;
@@ -33,7 +33,7 @@ pub struct Compiler<'s> {
   had_error: bool,
   panic_mode: bool,
   debug: bool,
-  scope: Vec<LocalStack>
+  scope: Vec<Scope>
 }
 
 impl<'s> Compiler<'s> {
@@ -46,14 +46,16 @@ impl<'s> Compiler<'s> {
       had_error: false,
       panic_mode: false,
       debug: true,
-      scope: vec![LocalStack::init(FunctionType::Script)]
+      scope: vec![Scope::init(FunctionType::Script)]
     };
     compiler.advance();
     compiler
   }
 
-  pub fn scope_mut(&mut self) -> &mut LocalStack { self.scope.last_mut().unwrap() }
-  pub fn scope(&self) -> &LocalStack { self.scope.last().unwrap() }
+  pub fn top_scope_mut(&mut self) -> &mut Scope { self.scope.last_mut().unwrap() }
+  pub fn top_scope(&self) -> &Scope { self.scope.last().unwrap() }
+  pub fn scope_at(&self, ind: usize) -> Option<&Scope> { self.scope.get(ind) }
+  pub fn scope_at_mut(&mut self, ind: usize) -> Option<&mut Scope> { self.scope.get_mut(ind) }
   pub fn scope_function(&self) -> &Function { self.scope.last().unwrap().function() }
   pub fn scope_function_mut(&mut self) -> &mut Function { self.scope.last_mut().unwrap().function_mut() }
 
@@ -124,24 +126,27 @@ impl<'s> Compiler<'s> {
     self.current_chunk().patch_jump(offset, jump)
   }
 
-  pub fn current_chunk(&mut self) -> &mut Chunk { self.scope_mut().function.chunk_mut() }
+  pub fn current_chunk(&mut self) -> &mut Chunk { self.top_scope_mut().function.chunk_mut() }
 
   pub fn end_compiler(mut self) -> Function {
     debug_assert_eq!(self.scope.len(), 1);
-    self.pop_scope()
+    let scope = self.pop_scope();
+    debug_assert_eq!(scope.upvals.len(), 0);
+    debug_assert_eq!(scope.function.upvals(), 0);
+    scope.function
   }
 
   pub fn push_scope(&mut self) {
-    self.scope.push(LocalStack::init(FunctionType::Function));
+    self.scope.push(Scope::init(FunctionType::Function));
   }
 
-  pub fn pop_scope(&mut self) -> Function {
+  pub fn pop_scope(&mut self) -> Scope {
     let scope = self.scope.pop().unwrap();
     if self.debug && !self.had_error {
       println!("\nCompiled code ({}):", scope.function().smart_name());
       scope.function.chunk().debug();
     }
-    scope.function
+    scope
   }
 
   pub fn body(&mut self) -> Result<()> {
@@ -172,12 +177,12 @@ impl<'s> Compiler<'s> {
   }
 
   pub fn begin_scope(&mut self) {
-    self.scope_mut().incr_depth();
+    self.top_scope_mut().incr_depth();
   }
 
   pub fn end_scope(&mut self) {
-    self.scope_mut().decr_depth();
-    let drain_depth = self.scope_mut().drain_depth();
+    self.top_scope_mut().decr_depth();
+    let drain_depth = self.top_scope_mut().drain_depth();
     self.emit_instr(Opcode::Popout(drain_depth));
   }
 
@@ -225,7 +230,7 @@ impl<'s> Compiler<'s> {
   }
 
   pub fn mark_initialized(&mut self) {
-    self.scope_mut().mark_last_initialized();
+    self.top_scope_mut().mark_last_initialized();
   }
 
   pub fn parse_variable(&mut self) -> Result<()> {
@@ -239,7 +244,7 @@ impl<'s> Compiler<'s> {
   }
 
   pub fn declare_variable(&mut self, name: String) -> Result<()> {
-    if self.scope().defined(&name) {
+    if self.top_scope().defined(&name) {
       bail!(Runtime, "Already defined variable {}", name);
     }
     self.add_local(name)
@@ -247,10 +252,10 @@ impl<'s> Compiler<'s> {
 
   pub fn add_local(&mut self, name: String) -> Result<()> {
     let local = Local::new(name);
-    if self.scope().len() > MAX_LOCALS {
-      bail!(Runtime, "Too many locals: {}", self.scope().len());
+    if self.top_scope().len() > MAX_LOCALS {
+      bail!(Runtime, "Too many locals: {}", self.top_scope().len());
     }
-    self.scope_mut().add_local(local);
+    self.top_scope_mut().add_local(local);
     Ok(())
   }
 
@@ -289,29 +294,43 @@ impl<'s> Compiler<'s> {
       let name = s.to_string();
       if let Some(c) = self.resolve_local(&name)? {
         self.emit_instr(Opcode::GetLocal(c));
-        Ok(())
+      } else if let Some(u) = self.resolve_upval(&name)? {
+        self.emit_instr(Opcode::GetUpval(u));
       } else {
         let g = self.add_constant(name.into())?;
         self.emit_instr(Opcode::GetGlobal(g));
-        Ok(())
       }
+      Ok(())
     } else {
       err!(Compile, "Unexpected token for named variable {:?}", self.previous)
     }
   }
 
   pub fn resolve_local(&self, name: &str) -> Result<Option<usize>> {
-    let i = self.scope().locals().iter().enumerate().rev().find(|(_, l)| l.name() == name).map(|(i, _)| i);
-    match i {
-      None => Ok(None),
-      Some(i) => {
-        if self.scope().initialized(i) {
-          Ok(Some(i))
-        } else {
-          err!(Compile, "Can't read local in its own initializer")
-        }
-      }
+    self.top_scope().resolve_local(name)
+  }
+
+  pub fn resolve_upval(&mut self, name: &str) -> Result<Option<usize>> {
+    let scope_ind = self.scope.len() - 1;
+    self.resolve_upval_recurse(name, scope_ind)
+  }
+
+  pub fn resolve_upval_recurse(&mut self, name: &str, scope_ind: usize) -> Result<Option<usize>> {
+    if scope_ind == 0 {
+      return Ok(None);
     }
+
+    let prev_local = self.scope_at(scope_ind - 1).unwrap().resolve_local(name)?;
+    if let Some(i) = prev_local {
+      return Ok(Some(self.scope_at_mut(scope_ind).unwrap().add_upval(i, true)));
+    }
+
+    let prev_upval = self.resolve_upval_recurse(name, scope_ind - 1)?;
+    if let Some(i) = prev_upval {
+      return Ok(Some(self.scope_at_mut(scope_ind).unwrap().add_upval(i, false)));
+    }
+
+    Ok(None)
   }
 
   pub fn grouping(&mut self) -> Result<()> {
@@ -380,8 +399,8 @@ impl<'s> Compiler<'s> {
     self.consume(TokenTypeDiscr::CloseCurl);
     self.emit_instr(Opcode::Return);
 
-    let function = self.pop_scope();
-    self.emit_closure(function)
+    let scope = self.pop_scope();
+    self.emit_closure(scope)
   }
 
   pub fn call(&mut self) -> Result<()> {
@@ -479,9 +498,10 @@ impl<'s> Compiler<'s> {
     Ok(())
   }
 
-  pub fn emit_closure(&mut self, v: Function) -> Result<()> {
-    let cc = self.add_constant(v.into())?;
-    self.emit_instr(Opcode::Closure(cc));
+  pub fn emit_closure(&mut self, s: Scope) -> Result<()> {
+    let Scope { upvals, function, .. } = s;
+    let cc = self.add_constant(function.into())?;
+    self.emit_instr(Opcode::Closure(cc, upvals));
     Ok(())
   }
 
@@ -507,11 +527,12 @@ impl<'s> Compiler<'s> {
   }
 }
 
-pub struct LocalStack {
+pub struct Scope {
   function: Function,
   function_type: FunctionType,
   locals: Vec<Local>,
-  scope_depth: u16
+  scope_depth: u16,
+  upvals: Vec<Upval>
 }
 
 pub enum FunctionType {
@@ -519,9 +540,15 @@ pub enum FunctionType {
   Script
 }
 
-impl LocalStack {
-  pub fn init(function_type: FunctionType) -> LocalStack {
-    LocalStack { function: Function::new(), function_type, locals: vec![Local::new(String::new())], scope_depth: 0 }
+impl Scope {
+  pub fn init(function_type: FunctionType) -> Scope {
+    Scope {
+      function: Function::new(),
+      function_type,
+      locals: vec![Local::new(String::new())],
+      scope_depth: 0,
+      upvals: Vec::new()
+    }
   }
 
   pub fn locals(&self) -> &[Local] { &self.locals }
@@ -536,9 +563,27 @@ impl LocalStack {
   pub fn function(&self) -> &Function { &self.function }
   pub fn function_mut(&mut self) -> &mut Function { &mut self.function }
 
+  pub fn upvals(&self) -> &[Upval] { &self.upvals }
+  pub fn upvals_len(&self) -> usize { self.upvals.len() }
+
+  pub fn push_upval(&mut self, upval: Upval) {
+    self.upvals.push(upval);
+    self.function.incr_upvals();
+  }
+
   pub fn mark_last_initialized(&mut self) {
     let last = self.locals.len() - 1;
     self.locals[last].depth = self.scope_depth;
+  }
+
+  pub fn add_upval(&mut self, index: usize, is_local: bool) -> usize {
+    match self.upvals().iter().position(|v| v.index() == index && v.is_local() == is_local) {
+      Some(p) => p,
+      None => {
+        self.push_upval(Upval::new(index, is_local));
+        self.upvals_len() - 1
+      }
+    }
   }
 
   pub fn drain_depth(&mut self) -> usize {
@@ -553,6 +598,20 @@ impl LocalStack {
 
   pub fn defined(&self, name: &str) -> bool {
     self.locals.iter().rev().take_while(|l| l.depth() >= self.scope_depth).any(|l| l.name() == name)
+  }
+
+  pub fn resolve_local(&self, name: &str) -> Result<Option<usize>> {
+    let i = self.locals().iter().enumerate().rev().find(|(_, l)| l.name() == name).map(|(i, _)| i);
+    match i {
+      None => Ok(None),
+      Some(i) => {
+        if self.initialized(i) {
+          Ok(Some(i))
+        } else {
+          err!(Compile, "Can't read local in its own initializer")
+        }
+      }
+    }
   }
 }
 

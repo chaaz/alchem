@@ -10,12 +10,13 @@ pub type Native = fn(&[Value]) -> Result<Value>;
 pub struct Function {
   arity: u8,
   chunk: Chunk,
-  name: Option<String>
+  name: Option<String>,
+  upvals: usize
 }
 
 impl fmt::Debug for Function {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    write!(f, "fn {}({} args) {{ ... }}", self.smart_name(), self.arity)
+    write!(f, "fn({} args),{}", self.arity, self.upvals)
   }
 }
 
@@ -24,12 +25,14 @@ impl Default for Function {
 }
 
 impl Function {
-  pub fn new() -> Function { Function { arity: 0, chunk: Chunk::new(), name: None } }
+  pub fn new() -> Function { Function { arity: 0, chunk: Chunk::new(), name: None, upvals: 0 } }
   pub fn arity(&self) -> u8 { self.arity }
   pub fn chunk(&self) -> &Chunk { &self.chunk }
   pub fn chunk_mut(&mut self) -> &mut Chunk { &mut self.chunk }
   pub fn into_chunk(self) -> Chunk { self.chunk }
   pub fn name(&self) -> &Option<String> { &self.name }
+  pub fn incr_upvals(&mut self) { self.upvals += 1; }
+  pub fn upvals(&self) -> usize { self.upvals }
 
   pub fn smart_name(&self) -> String {
     match &self.name {
@@ -44,24 +47,60 @@ impl Function {
   }
 }
 
+pub struct Upval {
+  index: usize,
+  is_local: bool
+}
+
+impl fmt::Debug for Upval {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    write!(f, "{} {}", if self.is_local { "local" } else { "upval" }, self.index)
+  }
+}
+
+impl Upval {
+  pub fn new(index: usize, is_local: bool) -> Upval { Upval { index, is_local } }
+  pub fn index(&self) -> usize { self.index }
+  pub fn is_local(&self) -> bool { self.is_local }
+}
+
 pub struct Closure {
   function: Arc<Function>,
-  captures: Vec<Value>
+  upvalues: Vec<ObjUpvalue>
 }
 
 impl fmt::Debug for Closure {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    write!(f, "{:?}+{:?}", self.function, self.captures)
+    write!(f, "{:?}={:?}", self.function, self.upvalues)
   }
 }
 
 impl Closure {
-  pub fn new(function: Arc<Function>) -> Closure { Closure { function, captures: Vec::new() } }
+  pub fn new(function: Arc<Function>, upvalues: Vec<ObjUpvalue>) -> Closure { Closure { function, upvalues } }
   pub fn arity(&self) -> u8 { self.function.arity() }
   pub fn chunk(&self) -> &Chunk { self.function.chunk() }
   pub fn name(&self) -> &Option<String> { self.function.name() }
   pub fn smart_name(&self) -> String { self.function.smart_name() }
   pub fn function(&self) -> &Function { &self.function }
+  pub fn upvalues(&self) -> &[ObjUpvalue] { &self.upvalues }
+}
+
+// Using "ObjUpvalue" (the runtime object) as the name here, to distinguish from "Upval" that is primarily a
+// compiler concern.
+#[derive(Clone)]
+pub struct ObjUpvalue {
+  location: usize
+}
+
+impl fmt::Debug for ObjUpvalue {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    write!(f, "{}", self.location)
+  }
+}
+
+impl ObjUpvalue {
+  pub fn new(location: usize) -> ObjUpvalue { ObjUpvalue { location } }
+  pub fn location(&self) -> usize { self.location }
 }
 
 pub struct Chunk {
@@ -151,11 +190,12 @@ pub enum Opcode {
   Equals,
   NotEquals,
   Constant(usize),
-  Closure(usize),
+  Closure(usize, Vec<Upval>),
   Negate,
   Not,
   Return,
   GetLocal(usize),
+  GetUpval(usize),
   GetGlobal(usize),
   Pop,
   Popout(usize),

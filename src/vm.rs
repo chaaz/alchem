@@ -1,7 +1,7 @@
 //! The actual VM for parsing the bytecode.
 
 use crate::compiler::compile;
-use crate::common::{Chunk, Opcode, Instr, Closure, Native};
+use crate::common::{Chunk, Opcode, Instr, Closure, Native, ObjUpvalue};
 use crate::value::Value;
 use crate::errors::Result;
 use std::sync::Arc;
@@ -13,6 +13,7 @@ const FRAMES_MAX: usize = 255;
 type Stack = Vec<Value>;
 type CallStack = Vec<CallFrame>;
 type Globals = HashMap<String, Value>;
+type ObjUpvalues = [ObjUpvalue];
 
 pub struct Vm {
   debug: bool,
@@ -41,7 +42,7 @@ impl Vm {
 
     // lock it in
     let function = Arc::new(function);
-    let closure = Arc::new(Closure::new(function));
+    let closure = Arc::new(Closure::new(function, Vec::new()));
 
     self.stack.push(closure.clone().into());
     call(closure, 0, self.stack.len())?.perform(&mut self.call_stack);
@@ -64,7 +65,7 @@ impl Vm {
 
     'outer: loop {
       let frame = call_stack.last_mut().unwrap();
-      let (ip, chunk, slots) = frame.parts();
+      let (ip, upvals, chunk, slots) = frame.parts();
 
       loop {
         match chunk.at(*ip) {
@@ -72,7 +73,7 @@ impl Vm {
           Some(instr) => {
             debug_instr(*debug, stack, *ip, instr);
             *ip += 1;
-            if let Some(stack_op) = handle_op(instr, globals, chunk, slots, stack, ip)? {
+            if let Some(stack_op) = handle_op(instr, globals, upvals, chunk, slots, stack, ip)? {
               stack_op.perform(call_stack);
               if call_stack.len() > FRAMES_MAX {
                 bail!(Runtime, "Stack overflow: {}.", call_stack.len());
@@ -144,7 +145,8 @@ fn rpeek(stack: &mut Stack, back: usize) -> Result<&Value> {
 }
 
 fn handle_op(
-  instr: &Instr, globals: &Globals, chunk: &Chunk, slots: &usize, stack: &mut Stack, ip: &mut usize
+  instr: &Instr, globals: &Globals, upvalues: &ObjUpvalues, chunk: &Chunk, slots: &usize, stack: &mut Stack,
+  ip: &mut usize
 ) -> Result<Option<StackOp>> {
   match instr.op() {
     Opcode::Constant(c) => {
@@ -171,6 +173,7 @@ fn handle_op(
       let name = chunk.get_constant(*l).unwrap().as_str().unwrap();
       stack.push(globals.get(name).ok_or_else(|| bad!(Runtime, "No such variable \"{}\".", name))?.try_clone()?);
     }
+    Opcode::GetUpval(u) => stack.push(stack[upvalues[*u].location()].try_clone()?),
     Opcode::Jump(offset) => *ip += *offset as usize,
     Opcode::JumpIfFalse(offset) => {
       if !peek(stack)?.try_bool()? {
@@ -190,15 +193,26 @@ fn handle_op(
       stack.truncate(slots + 1);
       return Ok(Some(StackOp::Pop));
     }
-    Opcode::Closure(c) => {
+    Opcode::Closure(c, upvals) => {
       let val = chunk.get_constant(*c).unwrap();
-      let closure = Closure::new(val.try_function().unwrap());
-      stack.push(closure.into())
+
+      let new_upvalues = upvals.iter().map(|v| {
+        if v.is_local() {
+          capture_upvalue(*slots + v.index())
+        } else {
+          upvalues[v.index()].clone()
+        }
+      }).collect();
+
+      let closure = Closure::new(val.try_function().unwrap(), new_upvalues);
+      stack.push(closure.into());
     }
   }
 
   Ok(None)
 }
+
+fn capture_upvalue(i: usize) -> ObjUpvalue { ObjUpvalue::new(i) }
 
 enum StackOp {
   Push(CallFrame),
@@ -268,7 +282,9 @@ impl CallFrame {
   pub fn ip_mut(&mut self) -> &mut usize { &mut self.ip }
   pub fn slots(&self) -> usize { self.slots }
   pub fn slots_mut(&mut self) -> &mut usize { &mut self.slots }
-  pub fn parts(&mut self) -> (&mut usize, &Chunk, &usize) { (&mut self.ip, &self.closure.chunk(), &self.slots) }
+  pub fn parts(&mut self) -> (&mut usize, &ObjUpvalues, &Chunk, &usize) {
+    (&mut self.ip, self.closure.upvalues(), self.closure.chunk(), &self.slots)
+  }
 }
 
 #[cfg(test)]
