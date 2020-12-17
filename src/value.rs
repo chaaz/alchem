@@ -1,7 +1,7 @@
 //! The values representable in our language.
 
 use crate::errors::Result;
-use crate::common::{Function, Native};
+use crate::common::{Function, Closure, Native};
 use std::sync::Arc;
 use std::fmt;
 
@@ -13,6 +13,7 @@ pub enum Value {
   Bool(bool),
   String(Arc<str>),
   Function(Arc<Function>),
+  Closure(Arc<Closure>),
   Native(Native)
 }
 
@@ -24,6 +25,7 @@ impl fmt::Debug for Value {
       Self::Bool(v) => write!(f, "{}", v),
       Self::String(v) => write!(f, "\"{}\"", v),
       Self::Function(v) => write!(f, "{:?}", v),
+      Self::Closure(v) => write!(f, "{:?}", v),
       Self::Native(_) => write!(f, "(native)")
     }
   }
@@ -53,6 +55,14 @@ impl From<Arc<Function>> for Value {
   fn from(v: Arc<Function>) -> Value { Value::Function(v) }
 }
 
+impl From<Closure> for Value {
+  fn from(v: Closure) -> Value { Value::Closure(Arc::new(v)) }
+}
+
+impl From<Arc<Closure>> for Value {
+  fn from(v: Arc<Closure>) -> Value { Value::Closure(v) }
+}
+
 impl Value {
   pub fn cloneable(&self) -> bool { true }
 
@@ -72,7 +82,7 @@ impl Value {
 
   pub fn try_function(&self) -> Result<Arc<Function>> {
     match self {
-      Self::Function(f) => Ok(f.clone()),
+      Self::Function(v) => Ok(v.clone()),
       _ => err!(Compile, "Not a function: {:?}", self)
     }
   }
@@ -88,6 +98,7 @@ impl Value {
       Self::Bool(v) => Ok(Self::Bool(*v)),
       Self::String(v) => Ok(Self::String(v.clone())),
       Self::Function(v) => Ok(Self::Function(v.clone())),
+      Self::Closure(v) => Ok(Self::Closure(v.clone())),
       Self::Native(v) => Ok(Self::Native(*v))
     }
   }

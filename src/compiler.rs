@@ -291,8 +291,8 @@ impl<'s> Compiler<'s> {
         self.emit_instr(Opcode::GetLocal(c));
         Ok(())
       } else {
-        let cc = self.add_constant(name.into())?;
-        self.emit_instr(Opcode::GetGlobal(cc));
+        let g = self.add_constant(name.into())?;
+        self.emit_instr(Opcode::GetGlobal(g));
         Ok(())
       }
     } else {
@@ -381,7 +381,7 @@ impl<'s> Compiler<'s> {
     self.emit_instr(Opcode::Return);
 
     let function = self.pop_scope();
-    self.emit_value(function.into())
+    self.emit_closure(function)
   }
 
   pub fn call(&mut self) -> Result<()> {
@@ -476,6 +476,12 @@ impl<'s> Compiler<'s> {
   pub fn emit_value(&mut self, v: Value) -> Result<()> {
     let cc = self.add_constant(v)?;
     self.emit_instr(Opcode::Constant(cc));
+    Ok(())
+  }
+
+  pub fn emit_closure(&mut self, v: Function) -> Result<()> {
+    let cc = self.add_constant(v.into())?;
+    self.emit_instr(Opcode::Closure(cc));
     Ok(())
   }
 

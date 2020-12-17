@@ -1,7 +1,7 @@
 //! The actual VM for parsing the bytecode.
 
 use crate::compiler::compile;
-use crate::common::{Chunk, Opcode, Instr, Function, Native};
+use crate::common::{Chunk, Opcode, Instr, Closure, Native};
 use crate::value::Value;
 use crate::errors::Result;
 use std::sync::Arc;
@@ -41,9 +41,10 @@ impl Vm {
 
     // lock it in
     let function = Arc::new(function);
+    let closure = Arc::new(Closure::new(function));
 
-    self.stack.push(function.clone().into());
-    call(function, 0, self.stack.len())?.perform(&mut self.call_stack);
+    self.stack.push(closure.clone().into());
+    call(closure, 0, self.stack.len())?.perform(&mut self.call_stack);
 
     self.run()
   }
@@ -93,10 +94,10 @@ impl Vm {
   fn debug_stack_trace(&self) {
     println!("\nRuntime error:");
     for frame in self.call_stack.iter().rev() {
-      let function = frame.function();
-      let ip = max(1, min(function.chunk().code_len(), frame.ip()));
-      let instr = function.chunk().at(ip - 1).unwrap();
-      println!("  at {} in {}: {:?}", instr.loc(), function.smart_name(), instr);
+      let closure = frame.closure();
+      let ip = max(1, min(closure.chunk().code_len(), frame.ip()));
+      let instr = closure.chunk().at(ip - 1).unwrap();
+      println!("  at {} in {}: {:?}", instr.loc(), closure.smart_name(), instr);
     }
   }
 }
@@ -189,6 +190,11 @@ fn handle_op(
       stack.truncate(slots + 1);
       return Ok(Some(StackOp::Pop));
     }
+    Opcode::Closure(c) => {
+      let val = chunk.get_constant(*c).unwrap();
+      let closure = Closure::new(val.try_function().unwrap());
+      stack.push(closure.into())
+    }
   }
 
   Ok(None)
@@ -211,17 +217,17 @@ impl StackOp {
 fn call_value(stack: &mut Stack, argc: u8) -> Result<Option<StackOp>> {
   let value = rpeek(stack, argc as usize)?;
   match value {
-    Value::Function(f) => Ok(Some(call(f.clone(), argc, stack.len())?)),
+    Value::Closure(f) => Ok(Some(call(f.clone(), argc, stack.len())?)),
     Value::Native(f) => call_native(*f, argc, stack),
     other => err!(Runtime, "Not a function: {:?}", other)
   }
 }
 
-fn call(function: Arc<Function>, argc: u8, stack_len: usize) -> Result<StackOp> {
-  if argc != function.arity() {
-    bail!(Runtime, "Calling arity {} with {} args.", function.arity(), argc);
+fn call(closure: Arc<Closure>, argc: u8, stack_len: usize) -> Result<StackOp> {
+  if argc != closure.arity() {
+    bail!(Runtime, "Calling arity {} with {} args.", closure.arity(), argc);
   }
-  Ok(StackOp::Push(CallFrame::new(function, stack_len - (argc as usize) - 1)))
+  Ok(StackOp::Push(CallFrame::new(closure, stack_len - (argc as usize) - 1)))
 }
 
 fn call_native(native: Native, argc: u8, stack: &mut Stack) -> Result<Option<StackOp>> {
@@ -247,22 +253,22 @@ fn binary<F: FnOnce(Value, Value) -> Result<Value>>(stack: &mut Stack, f: F) -> 
 }
 
 pub struct CallFrame {
-  function: Arc<Function>,
+  closure: Arc<Closure>,
   ip: usize,
   slots: usize
 }
 
 impl CallFrame {
-  pub fn new(function: Arc<Function>, slots: usize) -> CallFrame {
-    CallFrame { function, ip: 0, slots }
+  pub fn new(closure: Arc<Closure>, slots: usize) -> CallFrame {
+    CallFrame { closure, ip: 0, slots }
   }
 
-  pub fn function(&self) -> &Function { &self.function }
+  pub fn closure(&self) -> &Closure { &self.closure }
   pub fn ip(&self) -> usize { self.ip }
   pub fn ip_mut(&mut self) -> &mut usize { &mut self.ip }
   pub fn slots(&self) -> usize { self.slots }
   pub fn slots_mut(&mut self) -> &mut usize { &mut self.slots }
-  pub fn parts(&mut self) -> (&mut usize, &Chunk, &usize) { (&mut self.ip, &self.function.chunk(), &self.slots) }
+  pub fn parts(&mut self) -> (&mut usize, &Chunk, &usize) { (&mut self.ip, &self.closure.chunk(), &self.slots) }
 }
 
 #[cfg(test)]

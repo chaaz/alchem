@@ -3,6 +3,7 @@
 use super::value::{Value, ValueArray};
 use super::errors::Result;
 use std::fmt;
+use std::sync::Arc;
 
 pub type Native = fn(&[Value]) -> Result<Value>;
 
@@ -41,6 +42,26 @@ impl Function {
     self.arity += 1;
     self.arity
   }
+}
+
+pub struct Closure {
+  function: Arc<Function>,
+  captures: Vec<Value>
+}
+
+impl fmt::Debug for Closure {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    write!(f, "{:?}+{:?}", self.function, self.captures)
+  }
+}
+
+impl Closure {
+  pub fn new(function: Arc<Function>) -> Closure { Closure { function, captures: Vec::new() } }
+  pub fn arity(&self) -> u8 { self.function.arity() }
+  pub fn chunk(&self) -> &Chunk { self.function.chunk() }
+  pub fn name(&self) -> &Option<String> { self.function.name() }
+  pub fn smart_name(&self) -> String { self.function.smart_name() }
+  pub fn function(&self) -> &Function { &self.function }
 }
 
 pub struct Chunk {
@@ -130,6 +151,7 @@ pub enum Opcode {
   Equals,
   NotEquals,
   Constant(usize),
+  Closure(usize),
   Negate,
   Not,
   Return,
