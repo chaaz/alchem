@@ -1,9 +1,9 @@
 //! The values representable in our language.
 
+use crate::common::{Closure, Function, Native};
 use crate::errors::Result;
-use crate::common::{Function, Closure, Native};
-use std::sync::Arc;
 use std::fmt;
+use std::sync::Arc;
 
 const MAX_CONSTANTS: usize = 255;
 
@@ -127,7 +127,7 @@ impl Value {
         s.push_str(&v2);
         Ok(Self::String(s.into()))
       }
-      (o1, o2) => bail!(Runtime, "Can't add mismatch types: {:?}, {:?}", o1, o2),
+      (o1, o2) => bail!(Runtime, "Can't add mismatch types: {:?}, {:?}", o1, o2)
     }
   }
 
@@ -135,7 +135,7 @@ impl Value {
     match (self, other) {
       (Self::Float(v1), Value::Float(v2)) => Ok(Self::Float(v1 - v2)),
       (Self::Int(v1), Value::Int(v2)) => Ok(Self::Int(v1 - v2)),
-      (o1, o2) => bail!(Runtime, "Can't subtract mismatch types: {:?}, {:?}", o1, o2),
+      (o1, o2) => bail!(Runtime, "Can't subtract mismatch types: {:?}, {:?}", o1, o2)
     }
   }
 
@@ -143,7 +143,7 @@ impl Value {
     match (self, other) {
       (Self::Float(v1), Value::Float(v2)) => Ok(Self::Float(v1 * v2)),
       (Self::Int(v1), Value::Int(v2)) => Ok(Self::Int(v1 * v2)),
-      (o1, o2) => bail!(Runtime, "Can't multiply mismatch types: {:?}, {:?}", o1, o2),
+      (o1, o2) => bail!(Runtime, "Can't multiply mismatch types: {:?}, {:?}", o1, o2)
     }
   }
 
@@ -151,7 +151,7 @@ impl Value {
     match (self, other) {
       (Self::Float(v1), Value::Float(v2)) => Ok(Self::Float(v1 / v2)),
       (Self::Int(v1), Value::Int(v2)) => Ok(Self::Int(v1 / v2)),
-      (o1, o2) => bail!(Runtime, "Can't divide mismatch types: {:?}, {:?}", o1, o2),
+      (o1, o2) => bail!(Runtime, "Can't divide mismatch types: {:?}, {:?}", o1, o2)
     }
   }
 
@@ -159,7 +159,7 @@ impl Value {
     match (self, other) {
       (Self::Float(v1), Value::Float(v2)) => Ok(Self::Float(v1 % v2)),
       (Self::Int(v1), Value::Int(v2)) => Ok(Self::Int(v1 % v2)),
-      (o1, o2) => bail!(Runtime, "Can't divide mismatch types: {:?}, {:?}", o1, o2),
+      (o1, o2) => bail!(Runtime, "Can't divide mismatch types: {:?}, {:?}", o1, o2)
     }
   }
 

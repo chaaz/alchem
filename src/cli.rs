@@ -1,9 +1,9 @@
 //! The command-line options for the executable.
 
-use clap::{crate_version, App, AppSettings, Arg, ArgMatches};
 use alchem::errors::Result;
-use alchem::vm::Vm;
 use alchem::value::Value;
+use alchem::vm::Vm;
+use clap::{crate_version, App, AppSettings, Arg, ArgMatches};
 use std::io::{self, BufRead};
 
 /// Get the values from the expected command-line options.

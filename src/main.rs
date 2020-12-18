@@ -4,6 +4,4 @@
 
 use alchem::errors::Result;
 
-pub async fn main() -> Result<()> {
-  crate::cli::execute().await
-}
+pub async fn main() -> Result<()> { crate::cli::execute().await }

@@ -1,7 +1,7 @@
 //! The alchem compiler.
 
-use crate::errors::{Result, Error};
-use crate::common::{Chunk, Instr, Opcode, Function, Upval};
+use crate::common::{Chunk, Function, Instr, Opcode, Upval};
+use crate::errors::{Error, Result};
 use crate::scanner::{Scanner, Token, TokenType, TokenTypeDiscr};
 use crate::value::Value;
 use lazy_static::lazy_static;
@@ -136,9 +136,7 @@ impl<'s> Compiler<'s> {
     scope.function
   }
 
-  pub fn push_scope(&mut self) {
-    self.scope.push(Scope::init(FunctionType::Function));
-  }
+  pub fn push_scope(&mut self) { self.scope.push(Scope::init(FunctionType::Function)); }
 
   pub fn pop_scope(&mut self) -> Scope {
     let scope = self.scope.pop().unwrap();
@@ -176,14 +174,20 @@ impl<'s> Compiler<'s> {
     Ok(())
   }
 
-  pub fn begin_scope(&mut self) {
-    self.top_scope_mut().incr_depth();
-  }
+  pub fn begin_scope(&mut self) { self.top_scope_mut().incr_depth(); }
 
   pub fn end_scope(&mut self) {
     self.top_scope_mut().decr_depth();
-    let drain_depth = self.top_scope_mut().drain_depth();
-    self.emit_instr(Opcode::Popout(drain_depth));
+
+    let drained = self.top_scope_mut().drain();
+    self.emit_instr(Opcode::RotateUp(drained.len() + 1));
+    for val in drained {
+      if val.is_captured() {
+        self.emit_instr(Opcode::CloseUpvalue);
+      } else {
+        self.emit_instr(Opcode::Pop);
+      }
+    }
   }
 
   pub fn synchronize(&mut self) {
@@ -195,9 +199,7 @@ impl<'s> Compiler<'s> {
       }
 
       match self.current_ttd() {
-        TokenTypeDiscr::Identifier
-          | TokenTypeDiscr::OpenSquare
-          | TokenTypeDiscr::OpenCurl => return,
+        TokenTypeDiscr::Identifier | TokenTypeDiscr::OpenSquare | TokenTypeDiscr::OpenCurl => return,
         _ => ()
       }
 
@@ -229,9 +231,7 @@ impl<'s> Compiler<'s> {
     }
   }
 
-  pub fn mark_initialized(&mut self) {
-    self.top_scope_mut().mark_last_initialized();
-  }
+  pub fn mark_initialized(&mut self) { self.top_scope_mut().mark_last_initialized(); }
 
   pub fn parse_variable(&mut self) -> Result<()> {
     self.consume(TokenTypeDiscr::Identifier);
@@ -272,9 +272,10 @@ impl<'s> Compiler<'s> {
     // `self.emit_value(to_value::<$t>($v)?)` doesn't work because of
     // https://github.com/rust-lang/rust/issues/56254
     macro_rules! emit_value {
-      ($v:tt, $t:ty) => (
-        { let to_valued = to_value::<$t>($v)?; self.emit_value(to_valued) }
-      )
+      ($v:tt, $t:ty) => {{
+        let to_valued = to_value::<$t>($v)?;
+        self.emit_value(to_valued)
+      }};
     }
 
     match self.previous.token_type() {
@@ -306,9 +307,7 @@ impl<'s> Compiler<'s> {
     }
   }
 
-  pub fn resolve_local(&self, name: &str) -> Result<Option<usize>> {
-    self.top_scope().resolve_local(name)
-  }
+  pub fn resolve_local(&self, name: &str) -> Result<Option<usize>> { self.top_scope().resolve_local(name) }
 
   pub fn resolve_upval(&mut self, name: &str) -> Result<Option<usize>> {
     let scope_ind = self.scope.len() - 1;
@@ -322,6 +321,7 @@ impl<'s> Compiler<'s> {
 
     let prev_local = self.scope_at(scope_ind - 1).unwrap().resolve_local(name)?;
     if let Some(i) = prev_local {
+      self.scope_at_mut(scope_ind - 1).unwrap().locals_mut()[i].set_captured(true);
       return Ok(Some(self.scope_at_mut(scope_ind).unwrap().add_upval(i, true)));
     }
 
@@ -505,9 +505,7 @@ impl<'s> Compiler<'s> {
     Ok(())
   }
 
-  pub fn add_constant(&mut self, v: Value) -> Result<usize> {
-    self.current_chunk().add_constant(v)
-  }
+  pub fn add_constant(&mut self, v: Value) -> Result<usize> { self.current_chunk().add_constant(v) }
 
   fn parse_precendence(&mut self, prec: Precedence) -> Result<()> {
     self.advance();
@@ -551,7 +549,9 @@ impl Scope {
     }
   }
 
+  pub fn top_local(&self) -> &Local { &self.locals.last().unwrap() }
   pub fn locals(&self) -> &[Local] { &self.locals }
+  pub fn locals_mut(&mut self) -> &mut Vec<Local> { &mut self.locals }
   pub fn scope_depth(&self) -> u16 { self.scope_depth }
   pub fn incr_depth(&mut self) { self.scope_depth += 1; }
   pub fn decr_depth(&mut self) { self.scope_depth -= 1; }
@@ -586,13 +586,11 @@ impl Scope {
     }
   }
 
-  pub fn drain_depth(&mut self) -> usize {
-    let orig_len = self.locals.len();
+  pub fn drain(&mut self) -> Vec<Local> {
     if let Some(p) = self.locals.iter().position(|l| l.depth() > self.scope_depth) {
-      self.locals.truncate(p);
-      orig_len - p
+      self.locals.split_off(p)
     } else {
-      0
+      Vec::new()
     }
   }
 
@@ -618,13 +616,16 @@ impl Scope {
 #[derive(Debug)]
 pub struct Local {
   name: String,
-  depth: u16
+  depth: u16,
+  is_captured: bool
 }
 
 impl Local {
-  pub fn new(name: String) -> Local { Local { name, depth: 0 } }
+  pub fn new(name: String) -> Local { Local { name, depth: 0, is_captured: false } }
   pub fn name(&self) -> &str { &self.name }
   pub fn depth(&self) -> u16 { self.depth }
+  pub fn is_captured(&self) -> bool { self.is_captured }
+  pub fn set_captured(&mut self, cap: bool) { self.is_captured = cap }
 }
 
 pub fn variable(compiler: &mut Compiler) -> Result<()> { compiler.variable() }
@@ -655,8 +656,7 @@ struct Rule {
 impl Rule {
   pub fn new(
     prefix: Option<for<'r, 's> fn(&'r mut Compiler<'s>) -> Result<()>>,
-    infix: Option<for<'r, 's> fn(&'r mut Compiler<'s>) -> Result<()>>,
-    precedence: Precedence
+    infix: Option<for<'r, 's> fn(&'r mut Compiler<'s>) -> Result<()>>, precedence: Precedence
   ) -> Rule {
     Rule { prefix, infix, precedence }
   }
@@ -738,7 +738,7 @@ fn construct_rules() -> HashMap<TokenTypeDiscr, Rule> {
 
   rules.insert(TokenTypeDiscr::Bof, Rule::new(None, None, Precedence::None));
   rules.insert(TokenTypeDiscr::Eof, Rule::new(None, None, Precedence::None));
-	rules.insert(TokenTypeDiscr::Comma, Rule::new(None, None, Precedence::None));
+  rules.insert(TokenTypeDiscr::Comma, Rule::new(None, None, Precedence::None));
   rules.insert(TokenTypeDiscr::Equals, Rule::new(None, None, Precedence::None));
   rules.insert(TokenTypeDiscr::PointLeft, Rule::new(None, None, Precedence::None));
   rules.insert(TokenTypeDiscr::Semi, Rule::new(None, None, Precedence::None));
@@ -774,8 +774,8 @@ fn construct_rules() -> HashMap<TokenTypeDiscr, Rule> {
   rules.insert(TokenTypeDiscr::IntLit, Rule::new(Some(literal), None, Precedence::None));
   rules.insert(TokenTypeDiscr::FloatLit, Rule::new(Some(literal), None, Precedence::None));
   rules.insert(TokenTypeDiscr::StringLit, Rule::new(Some(literal), None, Precedence::None));
-	rules.insert(TokenTypeDiscr::Identifier, Rule::new(Some(variable), None, Precedence::None));
-	rules.insert(TokenTypeDiscr::Error, Rule::new(None, None, Precedence::None));
+  rules.insert(TokenTypeDiscr::Identifier, Rule::new(Some(variable), None, Precedence::None));
+  rules.insert(TokenTypeDiscr::Error, Rule::new(None, None, Precedence::None));
 
   rules
 }

@@ -4,8 +4,8 @@
 
 #![recursion_limit = "1024"]
 
-mod main;
 mod cli;
+mod main;
 
 use env_logger::{Builder, Env};
 use std::process;

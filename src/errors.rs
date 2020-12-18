@@ -19,6 +19,12 @@ error_chain! {
   skip_msg_variant
 }
 
+impl<'a, T: ?Sized> From<std::sync::TryLockError<std::sync::MutexGuard<'a, T>>> for Error {
+  fn from(err: std::sync::TryLockError<std::sync::MutexGuard<'a, T>>) -> Error {
+    Error::from_kind(ErrorKind::Internal(format!("Mutex try lock error {:?}", err)))
+  }
+}
+
 #[macro_export]
 macro_rules! err {
   ($k:tt, $($arg:tt)*) => (

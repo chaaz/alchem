@@ -1,11 +1,13 @@
 //! Common info for the parser.
 
-use super::value::{Value, ValueArray};
 use super::errors::Result;
+use super::value::{Value, ValueArray};
 use std::fmt;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 pub type Native = fn(&[Value]) -> Result<Value>;
+pub type Stack = Vec<Value>;
+pub type ObjUpvalues = Mutex<Vec<ObjUpvalue>>;
 
 pub struct Function {
   arity: u8,
@@ -16,7 +18,9 @@ pub struct Function {
 
 impl fmt::Debug for Function {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    write!(f, "fn({} args),{}", self.arity, self.upvals)
+    let arg_n = if self.arity == 1 { "arg" } else { "args" };
+    let upv_n = if self.upvals == 1 { "capture" } else { "captures" };
+    write!(f, "fn({} {}),({} {})", self.arity, arg_n, self.upvals, upv_n)
   }
 }
 
@@ -66,41 +70,89 @@ impl Upval {
 
 pub struct Closure {
   function: Arc<Function>,
-  upvalues: Vec<ObjUpvalue>
+  upvalues: Mutex<Vec<ObjUpvalue>>
 }
 
 impl fmt::Debug for Closure {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    write!(f, "{:?}={:?}", self.function, self.upvalues)
+    // this is kinda ridiculous
+    let upvalues = {
+      match self.upvalues.try_lock() {
+        Ok(u) => format!("{:?}", u),
+        Err(_) => "[in use]".to_string()
+      }
+    };
+    write!(f, "{:?}={}", self.function, upvalues)
   }
 }
 
 impl Closure {
-  pub fn new(function: Arc<Function>, upvalues: Vec<ObjUpvalue>) -> Closure { Closure { function, upvalues } }
+  pub fn new(function: Arc<Function>, upvalues: Vec<ObjUpvalue>) -> Closure {
+    Closure { function, upvalues: Mutex::new(upvalues) }
+  }
+
   pub fn arity(&self) -> u8 { self.function.arity() }
   pub fn chunk(&self) -> &Chunk { self.function.chunk() }
   pub fn name(&self) -> &Option<String> { self.function.name() }
   pub fn smart_name(&self) -> String { self.function.smart_name() }
   pub fn function(&self) -> &Function { &self.function }
-  pub fn upvalues(&self) -> &[ObjUpvalue] { &self.upvalues }
+  pub fn upvalues(&self) -> &ObjUpvalues { &self.upvalues }
+
+  pub fn flip_upval(&self, index: usize, value: Value) -> Result<()> {
+    self.upvalues.try_lock()?.get_mut(index).unwrap().flip(value)?;
+    Ok(())
+  }
 }
 
 // Using "ObjUpvalue" (the runtime object) as the name here, to distinguish from "Upval" that is primarily a
 // compiler concern.
-#[derive(Clone)]
-pub struct ObjUpvalue {
-  location: usize
+pub enum ObjUpvalue {
+  Open(usize),
+  Closed(Value) // Arc<Value> ?
 }
 
 impl fmt::Debug for ObjUpvalue {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    write!(f, "{}", self.location)
+    match self {
+      Self::Open(loc) => write!(f, "open({})", loc),
+      Self::Closed(v) => write!(f, "closed({:?})", v)
+    }
   }
 }
 
 impl ObjUpvalue {
-  pub fn new(location: usize) -> ObjUpvalue { ObjUpvalue { location } }
-  pub fn location(&self) -> usize { self.location }
+  pub fn new(location: usize) -> ObjUpvalue { ObjUpvalue::Open(location) }
+
+  pub fn location(&self) -> Result<usize> {
+    match self {
+      Self::Open(loc) => Ok(*loc),
+      _ => err!(Internal, "No location in closed upvalue")
+    }
+  }
+
+  pub fn obtain(&self, stack: &[Value]) -> Result<Value> {
+    match self {
+      Self::Open(loc) => stack[*loc].try_clone(),
+      Self::Closed(v) => v.try_clone()
+    }
+  }
+
+  pub fn flip(&mut self, val: Value) -> Result<()> {
+    match self {
+      Self::Open(_) => {
+        *self = Self::Closed(val);
+        Ok(())
+      }
+      _ => err!(Internal, "ObjUpvalue already flipped.")
+    }
+  }
+
+  pub fn try_clone(&self) -> Result<ObjUpvalue> {
+    match self {
+      Self::Open(loc) => Ok(Self::Open(*loc)),
+      _ => err!(Internal, "Can't clone closed upvalue")
+    }
+  }
 }
 
 pub struct Chunk {
@@ -173,7 +225,6 @@ impl Instr {
   pub fn op_mut(&mut self) -> &mut Opcode { &mut self.op }
 }
 
-// TODO: force into u8
 #[derive(Debug)]
 pub enum Opcode {
   Add,
@@ -198,7 +249,8 @@ pub enum Opcode {
   GetUpval(usize),
   GetGlobal(usize),
   Pop,
-  Popout(usize),
+  RotateUp(usize),
+  CloseUpvalue,
   JumpIfFalse(u16),
   Jump(u16),
   Call(u8)

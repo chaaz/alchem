@@ -7,10 +7,10 @@
 #[macro_use]
 pub mod errors;
 pub mod common;
+pub mod compiler;
+pub mod scanner;
 pub mod value;
 pub mod vm;
-pub mod scanner;
-pub mod compiler;
 
 // #[allow(clippy::all)]
 // mod grammar_ext {

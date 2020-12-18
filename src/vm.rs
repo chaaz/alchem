@@ -1,25 +1,25 @@
 //! The actual VM for parsing the bytecode.
 
+use crate::common::{Chunk, Closure, Instr, Native, ObjUpvalue, ObjUpvalues, Opcode, Stack};
 use crate::compiler::compile;
-use crate::common::{Chunk, Opcode, Instr, Closure, Native, ObjUpvalue};
-use crate::value::Value;
 use crate::errors::Result;
-use std::sync::Arc;
-use std::cmp::{min, max};
+use crate::value::Value;
+use std::cmp::{max, min};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 const FRAMES_MAX: usize = 255;
 
-type Stack = Vec<Value>;
 type CallStack = Vec<CallFrame>;
 type Globals = HashMap<String, Value>;
-type ObjUpvalues = [ObjUpvalue];
+type OpenUpvalues = HashMap<usize, Vec<(Arc<Closure>, usize)>>;
 
 pub struct Vm {
   debug: bool,
   call_stack: CallStack,
   stack: Stack,
-  globals: Globals
+  globals: Globals,
+  open_upvals: OpenUpvalues
 }
 
 impl Default for Vm {
@@ -27,7 +27,9 @@ impl Default for Vm {
 }
 
 impl Vm {
-  pub fn new() -> Vm { Vm { debug: true, call_stack: Vec::new(), stack: Vec::new(), globals: HashMap::new() } }
+  pub fn new() -> Vm {
+    Vm { debug: true, call_stack: Vec::new(), stack: Vec::new(), globals: HashMap::new(), open_upvals: HashMap::new() }
+  }
 
   pub fn add_native(&mut self, name: impl ToString, native: Native) {
     self.globals.insert(name.to_string(), Value::Native(native));
@@ -45,7 +47,7 @@ impl Vm {
     let closure = Arc::new(Closure::new(function, Vec::new()));
 
     self.stack.push(closure.clone().into());
-    call(closure, 0, self.stack.len())?.perform(&mut self.call_stack);
+    call(closure, 0, self.stack.len())?.perform(&mut self.call_stack)?;
 
     self.run()
   }
@@ -59,13 +61,14 @@ impl Vm {
   }
 
   pub fn try_run(&mut self) -> Result<Value> {
-    let Vm { debug, call_stack, stack, globals } = self;
+    let Vm { debug, call_stack, stack, globals, open_upvals } = self;
 
     debug_start(*debug);
 
     'outer: loop {
       let frame = call_stack.last_mut().unwrap();
       let (ip, upvals, chunk, slots) = frame.parts();
+      let upvals = upvals.try_lock()?;
 
       loop {
         match chunk.at(*ip) {
@@ -73,8 +76,9 @@ impl Vm {
           Some(instr) => {
             debug_instr(*debug, stack, *ip, instr);
             *ip += 1;
-            if let Some(stack_op) = handle_op(instr, globals, upvals, chunk, slots, stack, ip)? {
-              stack_op.perform(call_stack);
+            if let Some(stack_op) = handle_op(instr, globals, &upvals, open_upvals, chunk, slots, stack, ip)? {
+              drop(upvals);
+              stack_op.perform(call_stack)?;
               if call_stack.len() > FRAMES_MAX {
                 bail!(Runtime, "Stack overflow: {}.", call_stack.len());
               }
@@ -113,7 +117,7 @@ fn debug_instr(debug: bool, stack: &[Value], ip: usize, instr: &Instr) {
   if debug {
     println!("Stack: ");
     for (i, v) in stack.iter().enumerate().rev() {
-      println!("  {:>0width$} : {:?}", i, v, width=4);
+      println!("  {:>0width$} : {:?}", i, v, width = 4);
     }
     println!("Executing {:>04}: {:?}", ip, instr);
   }
@@ -123,18 +127,14 @@ fn debug_end(debug: bool, stack: &[Value]) {
   if debug {
     println!("Final Stack: ");
     for (i, v) in stack.iter().enumerate().rev() {
-      println!("  {:>0width$} : {:?}", i, v, width=4);
+      println!("  {:>0width$} : {:?}", i, v, width = 4);
     }
   }
 }
 
-fn pop(stack: &mut Stack) -> Result<Value> {
-  stack.pop().ok_or_else(|| bad!(Compile, "No stack."))
-}
+fn pop(stack: &mut Stack) -> Result<Value> { stack.pop().ok_or_else(|| bad!(Compile, "No stack.")) }
 
-fn peek(stack: &mut Stack) -> Result<&Value> {
-  stack.last().ok_or_else(|| bad!(Compile, "No stack."))
-}
+fn peek(stack: &mut Stack) -> Result<&Value> { stack.last().ok_or_else(|| bad!(Compile, "No stack.")) }
 
 fn rpeek(stack: &mut Stack, back: usize) -> Result<&Value> {
   if stack.len() > back {
@@ -144,9 +144,10 @@ fn rpeek(stack: &mut Stack, back: usize) -> Result<&Value> {
   }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handle_op(
-  instr: &Instr, globals: &Globals, upvalues: &ObjUpvalues, chunk: &Chunk, slots: &usize, stack: &mut Stack,
-  ip: &mut usize
+  instr: &Instr, globals: &Globals, upvalues: &[ObjUpvalue], open_upvals: &mut OpenUpvalues, chunk: &Chunk,
+  slots: &usize, stack: &mut Stack, ip: &mut usize
 ) -> Result<Option<StackOp>> {
   match instr.op() {
     Opcode::Constant(c) => {
@@ -173,39 +174,58 @@ fn handle_op(
       let name = chunk.get_constant(*l).unwrap().as_str().unwrap();
       stack.push(globals.get(name).ok_or_else(|| bad!(Runtime, "No such variable \"{}\".", name))?.try_clone()?);
     }
-    Opcode::GetUpval(u) => stack.push(stack[upvalues[*u].location()].try_clone()?),
     Opcode::Jump(offset) => *ip += *offset as usize,
     Opcode::JumpIfFalse(offset) => {
       if !peek(stack)?.try_bool()? {
         *ip += *offset as usize
       }
     }
-    Opcode::Pop => drop(stack.pop()),
-    Opcode::Popout(c) => {
-      if *c > 0 {
-        stack.swap_remove(stack.len() - c - 1);
-        stack.truncate(stack.len() - c + 1);
+    Opcode::Pop => drop(stack.pop().ok_or_else(|| bad!(Internal, "Can't pop empty stack"))?),
+    Opcode::RotateUp(len) => {
+      if *len > 1 {
+        let stack_len = stack.len();
+        stack[stack_len - len ..].rotate_right(1);
       }
     }
     Opcode::Call(argc) => return call_value(stack, *argc),
     Opcode::Return => {
+      let mut index = stack.len() - 1;
+      while index > *slots {
+        if let Some(list) = open_upvals.get(&index) {
+          close_upvalues(list, &stack[index])?;
+          open_upvals.remove(&index);
+        }
+        index -= 1;
+      }
+
       stack.swap_remove(*slots);
       stack.truncate(slots + 1);
       return Ok(Some(StackOp::Pop));
     }
+    Opcode::GetUpval(u) => stack.push(upvalues[*u].obtain(stack)?),
     Opcode::Closure(c, upvals) => {
       let val = chunk.get_constant(*c).unwrap();
+      let new_upvalues: Vec<_> = upvals
+        .iter()
+        .map(
+          |v| if v.is_local() { capture_upvalue(*slots + v.index()) } else { upvalues[v.index()].try_clone().unwrap() }
+        )
+        .collect();
 
-      let new_upvalues = upvals.iter().map(|v| {
-        if v.is_local() {
-          capture_upvalue(*slots + v.index())
-        } else {
-          upvalues[v.index()].clone()
-        }
-      }).collect();
-
-      let closure = Closure::new(val.try_function().unwrap(), new_upvalues);
+      let uv_inds: Vec<_> = new_upvalues.iter().map(|v| v.location().unwrap()).collect();
+      let closure = Arc::new(Closure::new(val.try_function().unwrap(), new_upvalues));
+      for (ci, uvi) in uv_inds.into_iter().enumerate() {
+        open_upvals.entry(uvi).or_insert(Vec::new()).push((closure.clone(), ci));
+      }
       stack.push(closure.into());
+    }
+    Opcode::CloseUpvalue => {
+      let val = stack.pop().ok_or_else(|| bad!(Internal, "Can't close empty stack."))?;
+      let index = stack.len();
+      if let Some(list) = open_upvals.get(&index) {
+        close_upvalues(list, &val)?;
+        open_upvals.remove(&index);
+      }
     }
   }
 
@@ -214,17 +234,27 @@ fn handle_op(
 
 fn capture_upvalue(i: usize) -> ObjUpvalue { ObjUpvalue::new(i) }
 
+// Upvalues are done a little bit differently than they are in the book: since the language is immutable, we can
+// safely push things on the stack
+fn close_upvalues(list: &[(Arc<Closure>, usize)], val: &Value) -> Result<()> {
+  for (closure, ci) in list {
+    closure.flip_upval(*ci, val.try_clone()?)?;
+  }
+  Ok(())
+}
+
 enum StackOp {
   Push(CallFrame),
-  Pop,
+  Pop
 }
 
 impl StackOp {
-  pub fn perform(self, call_stack: &mut CallStack) {
+  pub fn perform(self, call_stack: &mut CallStack) -> Result<()> {
     match self {
       Self::Push(f) => call_stack.push(f),
-      Self::Pop => drop(call_stack.pop())
+      Self::Pop => drop(call_stack.pop().ok_or_else(|| bad!(Internal, "Can't pop empty call stack."))?)
     }
+    Ok(())
   }
 }
 
@@ -273,9 +303,7 @@ pub struct CallFrame {
 }
 
 impl CallFrame {
-  pub fn new(closure: Arc<Closure>, slots: usize) -> CallFrame {
-    CallFrame { closure, ip: 0, slots }
-  }
+  pub fn new(closure: Arc<Closure>, slots: usize) -> CallFrame { CallFrame { closure, ip: 0, slots } }
 
   pub fn closure(&self) -> &Closure { &self.closure }
   pub fn ip(&self) -> usize { self.ip }
