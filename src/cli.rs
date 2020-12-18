@@ -34,10 +34,11 @@ async fn parse_matches(m: ArgMatches<'_>) -> Result<()> {
   }
 }
 
-async fn run_file(input: &str) -> Result<Value> {
+async fn run_file(input: &str) -> Result<()> {
   let val = std::fs::read_to_string(input)?;
   let mut vm = Vm::new();
-  vm.interpret(&val)
+  println!("{:?}", vm.interpret(&val)?);
+  Ok(())
 }
 
 async fn repl() -> Result<()> {

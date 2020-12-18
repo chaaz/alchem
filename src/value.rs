@@ -2,11 +2,9 @@
 
 use crate::common::{Closure, Function, Native};
 use crate::errors::Result;
+use std::cmp::PartialEq;
 use std::fmt;
 use std::sync::Arc;
-use std::cmp::PartialEq;
-
-const MAX_CONSTANTS: usize = 255;
 
 pub enum Value {
   Float(f64),
@@ -250,40 +248,9 @@ impl Value {
   }
 }
 
-pub struct ValueArray {
-  values: Vec<Value>
-}
-
-impl Default for ValueArray {
-  fn default() -> ValueArray { ValueArray::new() }
-}
-
-impl ValueArray {
-  pub fn new() -> ValueArray { ValueArray { values: Vec::new() } }
-  pub fn len(&self) -> usize { self.values.len() }
-  pub fn is_empty(&self) -> bool { self.values.is_empty() }
-  pub fn get(&self, ind: usize) -> Option<&Value> { self.values.get(ind) }
-  pub fn iter(&self) -> impl Iterator<Item = &Value> { self.values.iter() }
-
-  pub fn add(&mut self, v: Value) -> Result<usize> {
-    self.values.push(v);
-    if self.len() > MAX_CONSTANTS {
-      bail!(Compile, "Too many constants in one chunk: {}", self.len());
-    }
-    Ok(self.len() - 1)
-  }
-}
-
 #[cfg(test)]
 mod test {
   use super::*;
-
-  #[test]
-  fn simple() {
-    let mut va = ValueArray::new();
-    assert_eq!(va.add(Value::Float(3.0)).unwrap(), 0);
-    assert_eq!(va.values.len(), 1);
-  }
 
   #[test]
   fn value_clone() {

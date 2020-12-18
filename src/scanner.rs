@@ -187,7 +187,6 @@ pub struct Token<'s> {
 impl<'s> Token<'s> {
   pub fn new(token_type: TokenType<'s>, line: usize) -> Token<'s> { Token { token_type, line } }
 
-  pub fn is_eof(&self) -> bool { self.token_type.is_eof() }
   pub fn is_error(&self) -> bool { self.token_type.is_error() }
   pub fn line(&self) -> usize { self.line }
   pub fn token_type(&self) -> &TokenType { &self.token_type }
@@ -238,7 +237,6 @@ pub enum TokenType<'s> {
 }
 
 impl<'s> TokenType<'s> {
-  pub fn is_eof(&self) -> bool { matches!(self, TokenType::Eof) }
   pub fn is_error(&self) -> bool { matches!(self, TokenType::Error(_)) }
   pub fn discr(&self) -> TokenTypeDiscr {
     match self {
@@ -328,8 +326,4 @@ pub enum TokenTypeDiscr {
   StringLit,
   Identifier,
   Error
-}
-
-impl TokenTypeDiscr {
-  pub fn is_eof(&self) -> bool { matches!(self, Self::Eof) }
 }

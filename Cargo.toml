@@ -22,3 +22,6 @@ path = "src/lib.rs"
 name = "alchem"
 path = "src/launch.rs"
 doc = false
+
+[features]
+trace = []

@@ -6,19 +6,8 @@
 
 #[macro_use]
 pub mod errors;
-pub mod common;
-pub mod compiler;
-pub mod scanner;
+pub(crate) mod common;
+pub(crate) mod compiler;
+pub(crate) mod scanner;
 pub mod value;
 pub mod vm;
-
-// #[allow(clippy::all)]
-// mod grammar_ext {
-//   use lalrpop_util::lalrpop_mod;
-//   lalrpop_mod!(pub grammar);
-// }
-
-// pub mod grammar {
-//   pub use super::grammar_ext::grammar::ScriptParser;
-//   pub use super::grammar_ext::grammar::Token;
-// }

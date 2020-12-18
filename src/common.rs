@@ -1,12 +1,13 @@
 //! Common info for the parser.
 
 use super::errors::Result;
-use super::value::{Value, ValueArray};
+use super::value::Value;
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
+const MAX_CONSTANTS: usize = 255;
+
 pub type Native = fn(&[Value]) -> Result<Value>;
-pub type Stack = Vec<Value>;
 pub type ObjUpvalues = Mutex<Vec<ObjUpvalue>>;
 
 pub struct Function {
@@ -193,7 +194,6 @@ impl Chunk {
     }
   }
 
-  pub fn constants(&self) -> &ValueArray { &self.constants }
   pub fn add_constant(&mut self, cnst: Value) -> Result<usize> { self.constants.add(cnst) }
   pub fn constants_len(&self) -> usize { self.constants.len() }
   pub fn constants_is_empty(&self) -> bool { self.constants.is_empty() }
@@ -208,6 +208,30 @@ impl Chunk {
     for (i, op) in self.code.iter().enumerate() {
       println!("  {:>04}: {:?}", i, op);
     }
+  }
+}
+
+struct ValueArray {
+  values: Vec<Value>
+}
+
+impl Default for ValueArray {
+  fn default() -> ValueArray { ValueArray::new() }
+}
+
+impl ValueArray {
+  pub fn new() -> ValueArray { ValueArray { values: Vec::new() } }
+  pub fn len(&self) -> usize { self.values.len() }
+  pub fn is_empty(&self) -> bool { self.values.is_empty() }
+  pub fn get(&self, ind: usize) -> Option<&Value> { self.values.get(ind) }
+  pub fn iter(&self) -> impl Iterator<Item = &Value> { self.values.iter() }
+
+  pub fn add(&mut self, v: Value) -> Result<usize> {
+    self.values.push(v);
+    if self.len() > MAX_CONSTANTS {
+      bail!(Compile, "Too many constants in one chunk: {}", self.len());
+    }
+    Ok(self.len() - 1)
   }
 }
 
@@ -279,5 +303,12 @@ mod test {
     assert_eq!(chunk.add_code_anon(Opcode::Constant(0)), 0);
     assert_eq!(chunk.code_len(), 1);
     assert_eq!(chunk.constants_len(), 1);
+  }
+
+  #[test]
+  fn value_array() {
+    let mut va = ValueArray::new();
+    assert_eq!(va.add(Value::Float(3.0)).unwrap(), 0);
+    assert_eq!(va.values.len(), 1);
   }
 }

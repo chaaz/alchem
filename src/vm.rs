@@ -1,6 +1,6 @@
 //! The actual VM for parsing the bytecode.
 
-use crate::common::{Chunk, Closure, Instr, Native, ObjUpvalue, ObjUpvalues, Opcode, Stack};
+use crate::common::{Chunk, Closure, Instr, Native, ObjUpvalue, ObjUpvalues, Opcode};
 use crate::compiler::compile;
 use crate::errors::Result;
 use crate::value::Value;
@@ -13,9 +13,9 @@ const FRAMES_MAX: usize = 255;
 type CallStack = Vec<CallFrame>;
 type Globals = HashMap<String, Value>;
 type OpenUpvalues = HashMap<usize, Vec<(Arc<Closure>, usize)>>;
+type Stack = Vec<Value>;
 
 pub struct Vm {
-  debug: bool,
   call_stack: CallStack,
   stack: Stack,
   globals: Globals,
@@ -28,7 +28,7 @@ impl Default for Vm {
 
 impl Vm {
   pub fn new() -> Vm {
-    Vm { debug: true, call_stack: Vec::new(), stack: Vec::new(), globals: HashMap::new(), open_upvals: HashMap::new() }
+    Vm { call_stack: Vec::new(), stack: Stack::new(), globals: HashMap::new(), open_upvals: HashMap::new() }
   }
 
   pub fn add_native(&mut self, name: impl ToString, native: Native) {
@@ -61,9 +61,10 @@ impl Vm {
   }
 
   pub fn try_run(&mut self) -> Result<Value> {
-    let Vm { debug, call_stack, stack, globals, open_upvals } = self;
+    let Vm { call_stack, stack, globals, open_upvals } = self;
 
-    debug_start(*debug);
+    #[cfg(feature = "trace")]
+    debug_start();
 
     'outer: loop {
       let frame = call_stack.last_mut().unwrap();
@@ -74,7 +75,8 @@ impl Vm {
         match chunk.at(*ip) {
           None => break 'outer,
           Some(instr) => {
-            debug_instr(*debug, stack, *ip, instr);
+            #[cfg(feature = "trace")]
+            debug_instr(stack, *ip, instr);
             *ip += 1;
             if let Some(stack_op) = handle_op(instr, globals, &upvals, open_upvals, chunk, slots, stack, ip)? {
               drop(upvals);
@@ -83,7 +85,8 @@ impl Vm {
                 bail!(Runtime, "Stack overflow: {}.", call_stack.len());
               }
               if call_stack.is_empty() {
-                debug_end(*debug, stack);
+                #[cfg(feature = "trace")]
+                debug_end(stack);
                 return Ok(pop(stack)?);
               }
               break;
@@ -92,7 +95,8 @@ impl Vm {
         }
       }
     }
-    debug_end(*debug, stack);
+    #[cfg(feature = "trace")]
+    debug_end(stack);
     bail!(Runtime, "Missing return.");
   }
 
@@ -107,28 +111,25 @@ impl Vm {
   }
 }
 
-fn debug_start(debug: bool) {
-  if debug {
-    println!();
-  }
+#[cfg(feature = "trace")]
+fn debug_start() {
+  println!();
 }
 
-fn debug_instr(debug: bool, stack: &[Value], ip: usize, instr: &Instr) {
-  if debug {
-    println!("Stack: ");
-    for (i, v) in stack.iter().enumerate().rev() {
-      println!("  {:>0width$} : {:?}", i, v, width = 4);
-    }
-    println!("Executing {:>04}: {:?}", ip, instr);
+#[cfg(feature = "trace")]
+fn debug_instr(stack: &[Value], ip: usize, instr: &Instr) {
+  println!("Stack: ");
+  for (i, v) in stack.iter().enumerate().rev() {
+    println!("  {:>0width$} : {:?}", i, v, width = 4);
   }
+  println!("Executing {:>04}: {:?}", ip, instr);
 }
 
-fn debug_end(debug: bool, stack: &[Value]) {
-  if debug {
-    println!("Final Stack: ");
-    for (i, v) in stack.iter().enumerate().rev() {
-      println!("  {:>0width$} : {:?}", i, v, width = 4);
-    }
+#[cfg(feature = "trace")]
+fn debug_end(stack: &[Value]) {
+  println!("Final Stack: ");
+  for (i, v) in stack.iter().enumerate().rev() {
+    println!("  {:>0width$} : {:?}", i, v, width = 4);
   }
 }
 
@@ -150,6 +151,7 @@ fn handle_op(
   slots: &usize, stack: &mut Stack, ip: &mut usize
 ) -> Result<Option<StackOp>> {
   match instr.op() {
+    Opcode::GetLocal(l) => stack.push(stack[*l + *slots].try_clone()?),
     Opcode::Constant(c) => {
       let lit = chunk.get_constant(*c).unwrap();
       stack.push(lit.try_clone()?);
@@ -169,7 +171,6 @@ fn handle_op(
     Opcode::Lte => binary(stack, |v, w| v.try_lte(w))?,
     Opcode::Equals => binary(stack, |v, w| v.try_eq(w))?,
     Opcode::NotEquals => binary(stack, |v, w| v.try_neq(w))?,
-    Opcode::GetLocal(l) => stack.push(stack[*l + *slots].try_clone()?),
     Opcode::GetGlobal(l) => {
       let name = chunk.get_constant(*l).unwrap().as_str().unwrap();
       stack.push(globals.get(name).ok_or_else(|| bad!(Runtime, "No such variable \"{}\".", name))?.try_clone()?);
