@@ -4,6 +4,7 @@ use crate::common::{Closure, Function, Native};
 use crate::errors::Result;
 use std::fmt;
 use std::sync::Arc;
+use std::cmp::PartialEq;
 
 const MAX_CONSTANTS: usize = 255;
 
@@ -15,6 +16,21 @@ pub enum Value {
   Function(Arc<Function>),
   Closure(Arc<Closure>),
   Native(Native)
+}
+
+impl PartialEq for Value {
+  fn eq(&self, other: &Value) -> bool {
+    match (self, other) {
+      (Self::Float(v1), Self::Float(v2)) => v1 == v2,
+      (Self::Int(v1), Self::Int(v2)) => v1 == v2,
+      (Self::Bool(v1), Self::Bool(v2)) => v1 == v2,
+      (Self::String(v1), Self::String(v2)) => v1 == v2,
+      (Self::Function(v1), Self::Function(v2)) => Arc::ptr_eq(v1, v2),
+      (Self::Closure(v1), Self::Closure(v2)) => Arc::ptr_eq(v1, v2),
+      (Self::Native(v1), Self::Native(v2)) => v1 as *const Native == v2 as *const Native,
+      _ => false
+    }
+  }
 }
 
 impl fmt::Debug for Value {
@@ -45,6 +61,10 @@ impl From<bool> for Value {
 
 impl From<String> for Value {
   fn from(v: String) -> Value { Value::String(v.into()) }
+}
+
+impl From<&str> for Value {
+  fn from(v: &str) -> Value { v.to_string().into() }
 }
 
 impl From<Function> for Value {
@@ -261,7 +281,7 @@ mod test {
   #[test]
   fn simple() {
     let mut va = ValueArray::new();
-    assert_eq!(va.add(Value::Float(3.0)), 0);
+    assert_eq!(va.add(Value::Float(3.0)).unwrap(), 0);
     assert_eq!(va.values.len(), 1);
   }
 

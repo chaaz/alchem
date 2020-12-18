@@ -268,15 +268,15 @@ mod test {
   #[test]
   fn simple() {
     let mut chunk = Chunk::new();
-    assert_eq!(chunk.add_code(Opcode::Return), 0);
+    assert_eq!(chunk.add_code_anon(Opcode::Return), 0);
     assert_eq!(chunk.code.len(), 1);
   }
 
   #[test]
   fn const_int() {
     let mut chunk = Chunk::new();
-    assert_eq!(chunk.add_constant(Value::Double(1.2)), 0);
-    assert_eq!(chunk.add_code(Opcode::Constant(0)), 0);
+    assert_eq!(chunk.add_constant(Value::Float(1.2)).unwrap(), 0);
+    assert_eq!(chunk.add_code_anon(Opcode::Constant(0)), 0);
     assert_eq!(chunk.code_len(), 1);
     assert_eq!(chunk.constants_len(), 1);
   }
