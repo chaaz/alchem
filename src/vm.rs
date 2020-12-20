@@ -7,14 +7,14 @@ use crate::value::Value;
 use std::cmp::{max, min};
 use std::collections::HashMap;
 use std::sync::Arc;
-use crate::stack::Stack;
+use crate::inline::Inline;
 
 const FRAMES_MAX: usize = 255;
 
 type CallStack = Vec<CallFrame>;
 type Globals = HashMap<String, Value>;
 type OpenUpvalues = HashMap<usize, Vec<(Arc<Closure>, usize)>>;
-// type Stack = Vec<Value>;
+type Stack = Inline<Value>;
 
 pub struct Vm {
   call_stack: CallStack,
@@ -142,9 +142,15 @@ fn handle_op(
 ) -> Result<Option<StackOp>> {
   match instr.op() {
     Opcode::Lt => {
-      let last = stack.len() - 1;
-      *stack.get_mut(last - 1) = stack.get(last - 1).try_lt(stack.get(last));
-      stack.drop()
+      // let v1 = stack.pop();
+      // let v2 = stack.pop();
+      // stack.push(v2.try_lt(&v1));
+
+      binary_fast(stack, |v, w| v.try_lt(w))
+
+      // let last = stack.len() - 1;
+      // *stack.get_mut(last - 1) = stack.get(last - 1).try_lt(stack.get(last));
+      // stack.drop()
     }
     Opcode::GetLocal(l) => stack.push(stack.get(*l + *slots).try_clone()?),
     Opcode::Constant(c) => {
@@ -154,7 +160,7 @@ fn handle_op(
     Opcode::Not => unary(stack, |v| v.try_not())?,
     Opcode::Negate => unary(stack, |v| v.try_negate())?,
     Opcode::Add => binary(stack, |v, w| v.try_add(w))?,
-    Opcode::Subtract => binary(stack, |v, w| v.try_subtract(w))?,
+    Opcode::Subtract => binary_fast(stack, |v, w| v.try_subtract(w)),
     Opcode::Multiply => binary(stack, |v, w| v.try_multiply(w))?,
     Opcode::Divide => binary(stack, |v, w| v.try_divide(w))?,
     Opcode::Mod => binary(stack, |v, w| v.try_mod(w))?,
@@ -290,6 +296,12 @@ fn binary<F: FnOnce(Value, Value) -> Result<Value>>(stack: &mut Stack, f: F) -> 
   let v2 = stack.pop();
   stack.push(f(v2, v1)?);
   Ok(())
+}
+
+fn binary_fast<F: FnOnce(&Value, &Value) -> Value>(stack: &mut Stack, f: F) {
+  let last = stack.len() - 1;
+  *stack.get_mut(last - 1) = f(stack.get(last - 1), stack.get(last));
+  stack.drop();
 }
 
 pub struct CallFrame {

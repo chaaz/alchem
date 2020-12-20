@@ -149,11 +149,11 @@ impl Value {
     }
   }
 
-  pub fn try_subtract(self, other: Value) -> Result<Value> {
+  pub fn try_subtract(&self, other: &Value) -> Value {
     match (self, other) {
-      (Self::Float(v1), Value::Float(v2)) => Ok(Self::Float(v1 - v2)),
-      (Self::Int(v1), Value::Int(v2)) => Ok(Self::Int(v1 - v2)),
-      (o1, o2) => bail!(Runtime, "Can't subtract mismatch types: {:?}, {:?}", o1, o2)
+      (Self::Float(v1), Value::Float(v2)) => Self::Float(v1 - v2),
+      (Self::Int(v1), Value::Int(v2)) => Self::Int(v1 - v2),
+      (o1, o2) => panic!("Can't subtract mismatch types: {:?}, {:?}", o1, o2)
     }
   }
 
