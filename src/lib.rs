@@ -9,5 +9,6 @@ pub mod errors;
 pub(crate) mod common;
 pub(crate) mod compiler;
 pub(crate) mod scanner;
+pub(crate) mod stack;
 pub mod value;
 pub mod vm;
