@@ -24,4 +24,8 @@ path = "src/launch.rs"
 doc = false
 
 [features]
-trace = []
+verbose = []
+
+[profile.release]
+# for profiling with instruments/perf
+debug = true

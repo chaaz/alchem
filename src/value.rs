@@ -197,11 +197,11 @@ impl Value {
     }
   }
 
-  pub fn try_lt(self, other: Value) -> Result<Value> {
+  pub fn try_lt(&self, other: &Value) -> Value {
     match (self, other) {
-      (Self::Float(v1), Value::Float(v2)) => Ok(Self::Bool(v1 < v2)),
-      (Self::Int(v1), Value::Int(v2)) => Ok(Self::Bool(v1 < v2)),
-      (o1, o2) => bail!(Runtime, "Can't compare types: {:?}, {:?}", o1, o2)
+      (Self::Float(v1), Value::Float(v2)) => Self::Bool(v1 < v2),
+      (Self::Int(v1), Value::Int(v2)) => Self::Bool(v1 < v2),
+      (o1, o2) => panic!("Can't compare types: {:?}, {:?}", o1, o2)
     }
   }
 

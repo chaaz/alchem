@@ -59,7 +59,7 @@ impl<'s> Compiler<'s> {
 
   fn advance(&mut self) {
     let next = self.next_token();
-    #[cfg(feature = "trace")]
+    #[cfg(feature = "verbose")]
     {
       println!("Got next token: {:?}", next);
     }
@@ -127,7 +127,7 @@ impl<'s> Compiler<'s> {
   #[allow(clippy::let_and_return)]
   fn pop_scope(&mut self) -> Scope {
     let scope = self.scope.pop().unwrap();
-    #[cfg(feature = "trace")]
+    #[cfg(feature = "verbose")]
     if !self.had_error {
       println!("\nCompiled code ({}):", scope.function().smart_name());
       scope.function.chunk().debug();

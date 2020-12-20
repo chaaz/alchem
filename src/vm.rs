@@ -63,7 +63,7 @@ impl Vm {
   pub fn try_run(&mut self) -> Result<Value> {
     let Vm { call_stack, stack, globals, open_upvals } = self;
 
-    #[cfg(feature = "trace")]
+    #[cfg(feature = "verbose")]
     debug_start();
 
     'outer: loop {
@@ -72,30 +72,29 @@ impl Vm {
       let upvals = upvals.try_lock()?;
 
       loop {
-        match chunk.at(*ip) {
-          None => break 'outer,
-          Some(instr) => {
-            #[cfg(feature = "trace")]
-            debug_instr(stack, *ip, instr);
-            *ip += 1;
-            if let Some(stack_op) = handle_op(instr, globals, &upvals, open_upvals, chunk, slots, stack, ip)? {
-              drop(upvals);
-              stack_op.perform(call_stack)?;
-              if call_stack.len() > FRAMES_MAX {
-                bail!(Runtime, "Stack overflow: {}.", call_stack.len());
-              }
-              if call_stack.is_empty() {
-                #[cfg(feature = "trace")]
-                debug_end(stack);
-                return Ok(pop(stack)?);
-              }
-              break;
+        if let Some(instr) = chunk.at(*ip) {
+          #[cfg(feature = "verbose")]
+          debug_instr(stack, *ip, instr);
+          *ip += 1;
+          if let Some(stack_op) = handle_op(instr, globals, &upvals, open_upvals, chunk, slots, stack, ip)? {
+            drop(upvals);
+            stack_op.perform(call_stack)?;
+            if call_stack.len() > FRAMES_MAX {
+              bail!(Runtime, "Stack overflow: {}.", call_stack.len());
             }
+            if call_stack.is_empty() {
+              #[cfg(feature = "verbose")]
+              debug_end(stack);
+              return Ok(pop(stack)?);
+            }
+            break;
           }
+        } else {
+          break 'outer
         }
       }
     }
-    #[cfg(feature = "trace")]
+    #[cfg(feature = "verbose")]
     debug_end(stack);
     bail!(Runtime, "Missing return.");
   }
@@ -105,18 +104,18 @@ impl Vm {
     for frame in self.call_stack.iter().rev() {
       let closure = frame.closure();
       let ip = max(1, min(closure.chunk().code_len(), frame.ip()));
-      let instr = closure.chunk().at(ip - 1).unwrap();
+      let instr = closure.chunk().at_fast(ip - 1);
       println!("  at {} in {}: {:?}", instr.loc(), closure.smart_name(), instr);
     }
   }
 }
 
-#[cfg(feature = "trace")]
+#[cfg(feature = "verbose")]
 fn debug_start() {
   println!();
 }
 
-#[cfg(feature = "trace")]
+#[cfg(feature = "verbose")]
 fn debug_instr(stack: &[Value], ip: usize, instr: &Instr) {
   println!("Stack: ");
   for (i, v) in stack.iter().enumerate().rev() {
@@ -125,7 +124,7 @@ fn debug_instr(stack: &[Value], ip: usize, instr: &Instr) {
   println!("Executing {:>04}: {:?}", ip, instr);
 }
 
-#[cfg(feature = "trace")]
+#[cfg(feature = "verbose")]
 fn debug_end(stack: &[Value]) {
   println!("Final Stack: ");
   for (i, v) in stack.iter().enumerate().rev() {
@@ -151,6 +150,11 @@ fn handle_op(
   slots: &usize, stack: &mut Stack, ip: &mut usize
 ) -> Result<Option<StackOp>> {
   match instr.op() {
+    Opcode::Lt => {
+      let last = stack.len() - 1;
+      stack[last - 1] = stack[last - 1].try_lt(&stack[last]);
+      drop(stack.pop().unwrap());
+    }
     Opcode::GetLocal(l) => stack.push(stack[*l + *slots].try_clone()?),
     Opcode::Constant(c) => {
       let lit = chunk.get_constant(*c).unwrap();
@@ -167,7 +171,6 @@ fn handle_op(
     Opcode::Or => binary(stack, |v, w| v.try_or(w))?,
     Opcode::Gt => binary(stack, |v, w| v.try_gt(w))?,
     Opcode::Gte => binary(stack, |v, w| v.try_gte(w))?,
-    Opcode::Lt => binary(stack, |v, w| v.try_lt(w))?,
     Opcode::Lte => binary(stack, |v, w| v.try_lte(w))?,
     Opcode::Equals => binary(stack, |v, w| v.try_eq(w))?,
     Opcode::NotEquals => binary(stack, |v, w| v.try_neq(w))?,
@@ -192,10 +195,11 @@ fn handle_op(
     Opcode::Return => {
       let mut index = stack.len() - 1;
       while index > *slots {
-        if let Some(list) = open_upvals.get(&index) {
-          close_upvalues(list, &stack[index])?;
-          open_upvals.remove(&index);
-        }
+        // FAST
+        // if let Some(list) = open_upvals.get(&index) {
+        //   close_upvalues(list, &stack[index])?;
+        //   open_upvals.remove(&index);
+        // }
         index -= 1;
       }
 

@@ -1,10 +1,10 @@
 //! The command-line options for the executable.
 
 use alchem::errors::Result;
-use alchem::value::Value;
+// use alchem::value::Value;
 use alchem::vm::Vm;
 use clap::{crate_version, App, AppSettings, Arg, ArgMatches};
-use std::io::{self, BufRead};
+// use std::io::{self, BufRead};
 
 /// Get the values from the expected command-line options.
 pub async fn execute() -> Result<()> {
@@ -30,7 +30,8 @@ pub async fn execute() -> Result<()> {
 async fn parse_matches(m: ArgMatches<'_>) -> Result<()> {
   match m.value_of("input") {
     Some(input) => run_file(input).await.map(|_value| ()),
-    None => repl().await
+    None => run_file("fib.alc").await.map(|_value| ())
+    // None => repl().await
   }
 }
 
@@ -41,21 +42,21 @@ async fn run_file(input: &str) -> Result<()> {
   Ok(())
 }
 
-async fn repl() -> Result<()> {
-  let mut vm = Vm::new();
-  vm.add_native("print", print);
-
-  let stdin = io::stdin();
-  for line in stdin.lock().lines() {
-    let line = line?;
-    let value = vm.interpret(&line)?;
-    println!("\nResult:\n= {:?}\n", value);
-  }
-  println!("Done.");
-  Ok(())
-}
-
-fn print(vals: &[Value]) -> Result<Value> {
-  println!("*** PRINT: {:?}", vals[0]);
-  Ok(Value::Int(1))
-}
+// async fn repl() -> Result<()> {
+//   let mut vm = Vm::new();
+//   vm.add_native("print", print);
+// 
+//   let stdin = io::stdin();
+//   for line in stdin.lock().lines() {
+//     let line = line?;
+//     let value = vm.interpret(&line)?;
+//     println!("\nResult:\n= {:?}\n", value);
+//   }
+//   println!("Done.");
+//   Ok(())
+// }
+// 
+// fn print(vals: &[Value]) -> Result<Value> {
+//   println!("*** PRINT: {:?}", vals[0]);
+//   Ok(Value::Int(1))
+// }

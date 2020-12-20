@@ -178,6 +178,14 @@ impl Chunk {
   pub fn code_is_empty(&self) -> bool { self.code.is_empty() }
   pub fn at(&self, ind: usize) -> Option<&Instr> { self.code.get(ind) }
 
+  // FAST
+  #[inline]
+  pub fn too_far(&self, ind: usize) -> bool { ind >= self.code.len() }
+
+  // FAST
+  #[inline]
+  pub fn at_fast(&self, ind: usize) -> &Instr { &self.code[ind] }
+
   pub fn add_value_anon(&mut self, v: Value) -> Result<()> {
     let cc = self.add_constant(v)?;
     self.add_code_anon(Opcode::Constant(cc));
