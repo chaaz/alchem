@@ -1,7 +1,7 @@
 //! Common info for the parser.
 
 use super::errors::Result;
-use super::value::Value;
+use super::value::{Value, Declared};
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
@@ -131,10 +131,10 @@ impl ObjUpvalue {
     }
   }
 
-  pub fn obtain(&self, stack: &[Value]) -> Value {
+  pub fn obtain(&mut self, stack: &mut [Value]) -> Value {
     match self {
-      Self::Open(loc) => stack[*loc].try_clone(),
-      Self::Closed(v) => v.try_clone()
+      Self::Open(loc) => stack[*loc].shift(),
+      Self::Closed(v) => v.shift()
     }
   }
 
@@ -186,7 +186,7 @@ impl Chunk {
   #[inline]
   pub fn at_fast(&self, ind: usize) -> &Instr { &self.code[ind] }
 
-  pub fn add_value_anon(&mut self, v: Value) -> Result<()> {
+  pub fn add_value_anon(&mut self, v: Declared) -> Result<()> {
     let cc = self.add_constant(v)?;
     self.add_code_anon(Opcode::Constant(cc));
     Ok(())
@@ -202,10 +202,10 @@ impl Chunk {
     }
   }
 
-  pub fn add_constant(&mut self, cnst: Value) -> Result<usize> { self.constants.add(cnst) }
+  pub fn add_constant(&mut self, cnst: Declared) -> Result<usize> { self.constants.add(cnst) }
   pub fn constants_len(&self) -> usize { self.constants.len() }
   pub fn constants_is_empty(&self) -> bool { self.constants.is_empty() }
-  pub fn get_constant(&self, ind: usize) -> Option<&Value> { self.constants.get(ind) }
+  pub fn get_constant(&self, ind: usize) -> Option<&Declared> { self.constants.get(ind) }
 
   pub fn debug(&self) {
     println!("constants:");
@@ -220,7 +220,7 @@ impl Chunk {
 }
 
 struct ValueArray {
-  values: Vec<Value>
+  values: Vec<Declared>
 }
 
 impl Default for ValueArray {
@@ -231,10 +231,10 @@ impl ValueArray {
   pub fn new() -> ValueArray { ValueArray { values: Vec::new() } }
   pub fn len(&self) -> usize { self.values.len() }
   pub fn is_empty(&self) -> bool { self.values.is_empty() }
-  pub fn get(&self, ind: usize) -> Option<&Value> { self.values.get(ind) }
-  pub fn iter(&self) -> impl Iterator<Item = &Value> { self.values.iter() }
+  pub fn get(&self, ind: usize) -> Option<&Declared> { self.values.get(ind) }
+  pub fn iter(&self) -> impl Iterator<Item = &Declared> { self.values.iter() }
 
-  pub fn add(&mut self, v: Value) -> Result<usize> {
+  pub fn add(&mut self, v: Declared) -> Result<usize> {
     self.values.push(v);
     if self.len() > MAX_CONSTANTS {
       bail!(Compile, "Too many constants in one chunk: {}", self.len());
@@ -285,7 +285,8 @@ pub enum Opcode {
   CloseUpvalue,
   JumpIfFalse(u16),
   Jump(u16),
-  Call(u8)
+  Call(u8),
+  Await
 }
 
 impl Opcode {

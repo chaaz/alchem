@@ -1,9 +1,10 @@
 //! The command-line options for the executable.
 
 use alchem::errors::Result;
-// use alchem::value::Value;
+use alchem::value::Value;
 use alchem::vm::Vm;
 use clap::{crate_version, App, AppSettings, Arg, ArgMatches};
+use std::future;
 // use std::io::{self, BufRead};
 
 /// Get the values from the expected command-line options.
@@ -38,7 +39,9 @@ async fn parse_matches(m: ArgMatches<'_>) -> Result<()> {
 async fn run_file(input: &str) -> Result<()> {
   let val = std::fs::read_to_string(input)?;
   let mut vm = Vm::new();
-  println!("{:?}", vm.interpret(&val)?);
+  vm.add_native("print", print);
+  vm.add_native("handle", handle);
+  println!("{:?}", vm.interpret(&val)?.await?);
   Ok(())
 }
 
@@ -55,8 +58,12 @@ async fn run_file(input: &str) -> Result<()> {
 //   println!("Done.");
 //   Ok(())
 // }
-// 
-// fn print(vals: &[Value]) -> Result<Value> {
-//   println!("*** PRINT: {:?}", vals[0]);
-//   Ok(Value::Int(1))
-// }
+
+fn handle(_vals: &[Value]) -> Result<Value> {
+  Ok(Value::Future(Box::new(future::ready(Ok(Value::Int(42))))))
+}
+
+fn print(vals: &[Value]) -> Result<Value> {
+  println!("*** PRINT: {:?}", vals[0]);
+  Ok(Value::Int(1))
+}

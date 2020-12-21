@@ -3,7 +3,7 @@
 use crate::common::{Chunk, Function, Instr, Opcode, Upval};
 use crate::errors::{Error, Result};
 use crate::scanner::{Scanner, Token, TokenType, TokenTypeDiscr};
-use crate::value::Value;
+use crate::value::Declared;
 use lazy_static::lazy_static;
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -138,9 +138,15 @@ impl<'s> Compiler<'s> {
   fn body(&mut self) -> Result<()> {
     loop {
       match self.current_ttd() {
-        TokenTypeDiscr::Equals | TokenTypeDiscr::PointLeft => {
+        TokenTypeDiscr::Equals => {
           self.advance();
           self.expression()?;
+          break;
+        }
+        TokenTypeDiscr::PointLeft => {
+          self.advance();
+          self.expression()?;
+          self.emit_instr(Opcode::Await);
           break;
         }
         TokenTypeDiscr::Eof => break,
@@ -198,8 +204,19 @@ impl<'s> Compiler<'s> {
   fn assignment(&mut self) -> Result<()> {
     if self.token_check(TokenTypeDiscr::Identifier) {
       self.parse_variable()?;
-      self.consume(TokenTypeDiscr::Equals);
+      let is_async = match self.current_ttd() {
+        TokenTypeDiscr::Equals => false,
+        TokenTypeDiscr::PointLeft => true,
+        _ => {
+          self.error_current("Unknown assignment operator.");
+          false
+        }
+      };
+      self.advance();
       self.expression()?;
+      if is_async {
+        self.emit_instr(Opcode::Await);
+      }
       self.consume(TokenTypeDiscr::Semi);
       self.mark_initialized();
       Ok(())
@@ -259,8 +276,8 @@ impl<'s> Compiler<'s> {
       TokenType::IntLit(v) => emit_value!(v, i32),
       TokenType::FloatLit(v) => emit_value!(v, f64),
       TokenType::StringLit(v) => emit_value!(v, String),
-      TokenType::TrueLit => self.emit_value(Value::Bool(true)),
-      TokenType::FalseLit => self.emit_value(Value::Bool(false)),
+      TokenType::TrueLit => self.emit_value(Declared::Bool(true)),
+      TokenType::FalseLit => self.emit_value(Declared::Bool(false)),
       other => bail!(Compile, "Unexpected literal {:?}", other)
     }
   }
@@ -469,7 +486,7 @@ impl<'s> Compiler<'s> {
   fn previous_ttd(&self) -> TokenTypeDiscr { self.previous.token_type().discr() }
   fn current_ttd(&self) -> TokenTypeDiscr { self.current.token_type().discr() }
 
-  fn emit_value(&mut self, v: Value) -> Result<()> {
+  fn emit_value(&mut self, v: Declared) -> Result<()> {
     let cc = self.add_constant(v)?;
     self.emit_instr(Opcode::Constant(cc));
     Ok(())
@@ -482,7 +499,7 @@ impl<'s> Compiler<'s> {
     Ok(())
   }
 
-  fn add_constant(&mut self, v: Value) -> Result<usize> { self.current_chunk().add_constant(v) }
+  fn add_constant(&mut self, v: Declared) -> Result<usize> { self.current_chunk().add_constant(v) }
 
   fn parse_precendence(&mut self, prec: Precedence) -> Result<()> {
     self.advance();
@@ -604,9 +621,9 @@ fn if_block(compiler: &mut Compiler) -> Result<()> { compiler.if_block() }
 fn fn_sync(compiler: &mut Compiler) -> Result<()> { compiler.fn_sync() }
 fn call(compiler: &mut Compiler) -> Result<()> { compiler.call() }
 
-fn to_value<V>(v: &str) -> Result<Value>
+fn to_value<V>(v: &str) -> Result<Declared>
 where
-  V: Into<Value> + FromStr,
+  V: Into<Declared> + FromStr,
   Error: From<<V as FromStr>::Err>
 {
   Ok(v.parse::<V>()?.into())
