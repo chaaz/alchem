@@ -141,17 +141,7 @@ fn handle_op(
   slots: &usize, stack: &mut Stack, ip: &mut usize
 ) -> Result<Option<StackOp>> {
   match instr.op() {
-    Opcode::Lt => {
-      // let v1 = stack.pop();
-      // let v2 = stack.pop();
-      // stack.push(v2.try_lt(&v1));
-
-      binary_fast(stack, |v, w| v.try_lt(w))
-
-      // let last = stack.len() - 1;
-      // *stack.get_mut(last - 1) = stack.get(last - 1).try_lt(stack.get(last));
-      // stack.drop()
-    }
+    Opcode::Lt => binary_fast(stack, |v, w| v.try_lt(w)),
     Opcode::GetLocal(l) => stack.push(stack.get(*l + *slots).try_clone()?),
     Opcode::Constant(c) => {
       let lit = chunk.get_constant(*c).unwrap();
@@ -159,7 +149,7 @@ fn handle_op(
     }
     Opcode::Not => unary(stack, |v| v.try_not())?,
     Opcode::Negate => unary(stack, |v| v.try_negate())?,
-    Opcode::Add => binary(stack, |v, w| v.try_add(w))?,
+    Opcode::Add => binary_fast(stack, |v, w| v.try_add(w)),
     Opcode::Subtract => binary_fast(stack, |v, w| v.try_subtract(w)),
     Opcode::Multiply => binary(stack, |v, w| v.try_multiply(w))?,
     Opcode::Divide => binary(stack, |v, w| v.try_divide(w))?,

@@ -136,16 +136,16 @@ impl Value {
     }
   }
 
-  pub fn try_add(self, other: Value) -> Result<Value> {
+  pub fn try_add(&self, other: &Value) -> Value {
     match (self, other) {
-      (Self::Float(v1), Value::Float(v2)) => Ok(Self::Float(v1 + v2)),
-      (Self::Int(v1), Value::Int(v2)) => Ok(Self::Int(v1 + v2)),
+      (Self::Float(v1), Value::Float(v2)) => Self::Float(v1 + v2),
+      (Self::Int(v1), Value::Int(v2)) => Self::Int(v1 + v2),
       (Self::String(v1), Value::String(v2)) => {
         let mut s = v1.to_string();
         s.push_str(&v2);
-        Ok(Self::String(s.into()))
+        Self::String(s.into())
       }
-      (o1, o2) => bail!(Runtime, "Can't add mismatch types: {:?}, {:?}", o1, o2)
+      (o1, o2) => panic!("Can't add mismatch types: {:?}, {:?}", o1, o2)
     }
   }
 
