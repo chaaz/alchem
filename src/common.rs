@@ -131,7 +131,7 @@ impl ObjUpvalue {
     }
   }
 
-  pub fn obtain(&self, stack: &[Value]) -> Result<Value> {
+  pub fn obtain(&self, stack: &[Value]) -> Value {
     match self {
       Self::Open(loc) => stack[*loc].try_clone(),
       Self::Closed(v) => v.try_clone()

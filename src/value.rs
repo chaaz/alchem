@@ -105,19 +105,15 @@ impl Value {
     }
   }
 
-  pub fn try_clone(&self) -> Result<Value> {
-    if !self.cloneable() {
-      bail!(Runtime, "Can't clone {:?}", self);
-    }
-
+  pub fn try_clone(&self) -> Value {
     match self {
-      Self::Float(v) => Ok(Self::Float(*v)),
-      Self::Int(v) => Ok(Self::Int(*v)),
-      Self::Bool(v) => Ok(Self::Bool(*v)),
-      Self::String(v) => Ok(Self::String(v.clone())),
-      Self::Function(v) => Ok(Self::Function(v.clone())),
-      Self::Closure(v) => Ok(Self::Closure(v.clone())),
-      Self::Native(v) => Ok(Self::Native(*v))
+      Self::Float(v) => Self::Float(*v),
+      Self::Int(v) => Self::Int(*v),
+      Self::Bool(v) => Self::Bool(*v),
+      Self::String(v) => Self::String(v.clone()),
+      Self::Function(v) => Self::Function(v.clone()),
+      Self::Closure(v) => Self::Closure(v.clone()),
+      Self::Native(v) => Self::Native(*v)
     }
   }
 

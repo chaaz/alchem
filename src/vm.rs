@@ -142,10 +142,10 @@ fn handle_op(
 ) -> Result<Option<StackOp>> {
   match instr.op() {
     Opcode::Lt => binary_fast(stack, |v, w| v.try_lt(w)),
-    Opcode::GetLocal(l) => stack.push(stack.get(*l + *slots).try_clone()?),
+    Opcode::GetLocal(l) => stack.push(stack.get(*l + *slots).try_clone()),
     Opcode::Constant(c) => {
       let lit = chunk.get_constant(*c).unwrap();
-      stack.push(lit.try_clone()?);
+      stack.push(lit.try_clone());
     }
     Opcode::Not => unary(stack, |v| v.try_not())?,
     Opcode::Negate => unary(stack, |v| v.try_negate())?,
@@ -163,7 +163,7 @@ fn handle_op(
     Opcode::NotEquals => binary(stack, |v, w| v.try_neq(w))?,
     Opcode::GetGlobal(l) => {
       let name = chunk.get_constant(*l).unwrap().as_str().unwrap();
-      stack.push(globals.get(name).ok_or_else(|| bad!(Runtime, "No such variable \"{}\".", name))?.try_clone()?);
+      stack.push(globals.get(name).ok_or_else(|| bad!(Runtime, "No such variable \"{}\".", name))?.try_clone());
     }
     Opcode::Jump(offset) => *ip += *offset as usize,
     Opcode::JumpIfFalse(offset) => {
@@ -194,7 +194,7 @@ fn handle_op(
       stack.truncate(slots + 1);
       return Ok(Some(StackOp::Pop));
     }
-    Opcode::GetUpval(u) => stack.push(upvalues[*u].obtain(stack)?),
+    Opcode::GetUpval(u) => stack.push(upvalues[*u].obtain(stack)),
     Opcode::Closure(c, upvals) => {
       let val = chunk.get_constant(*c).unwrap();
       let new_upvalues: Vec<_> = upvals
@@ -230,7 +230,7 @@ fn capture_upvalue(i: usize) -> ObjUpvalue { ObjUpvalue::new(i) }
 // safely push things on the stack
 fn close_upvalues(list: &[(Arc<Closure>, usize)], val: &Value) -> Result<()> {
   for (closure, ci) in list {
-    closure.flip_upval(*ci, val.try_clone()?)?;
+    closure.flip_upval(*ci, val.try_clone())?;
   }
   Ok(())
 }
