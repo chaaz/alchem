@@ -4,10 +4,11 @@ use super::errors::Result;
 use super::value::{Value, Declared};
 use std::fmt;
 use std::sync::{Arc, Mutex};
+use super::vm::Runner;
 
 const MAX_CONSTANTS: usize = 255;
 
-pub type Native = fn(&[Value]) -> Result<Value>;
+pub type Native = fn(&[Value], &mut Runner) -> Result<Value>;
 pub type ObjUpvalues = Mutex<Vec<ObjUpvalue>>;
 
 pub struct Function {

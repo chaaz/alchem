@@ -2,7 +2,7 @@
 
 use alchem::errors::Result;
 use alchem::value::Value;
-use alchem::vm::Vm;
+use alchem::vm::{Vm, Runner};
 use clap::{crate_version, App, AppSettings, Arg, ArgMatches};
 use std::future;
 // use std::io::{self, BufRead};
@@ -40,9 +40,23 @@ async fn run_file(input: &str) -> Result<()> {
   let val = std::fs::read_to_string(input)?;
   let mut vm = Vm::new();
   vm.add_native("print", print);
-  vm.add_native("handle", handle);
-  println!("{:?}", vm.interpret(&val)?.await?);
+  vm.add_native("number", number_async);
+  vm.add_native("recall", recall_sync);
+  println!("{:?}", vm.interpret(&val)?.run()?);
   Ok(())
+}
+
+fn number_async(_vals: &[Value], _runner: &mut Runner) -> Result<Value> {
+  Ok(Value::Future(Box::new(future::ready(Ok(Value::Int(42))))))
+}
+
+fn print(vals: &[Value], _runner: &mut Runner) -> Result<Value> {
+  println!("*** PRINT: {:?}", vals[0]);
+  Ok(Value::Int(1))
+}
+
+fn recall_sync(_vals: &[Value], _runner: &mut Runner) -> Result<Value> {
+  unimplemented!()
 }
 
 // async fn repl() -> Result<()> {
@@ -58,12 +72,3 @@ async fn run_file(input: &str) -> Result<()> {
 //   println!("Done.");
 //   Ok(())
 // }
-
-fn handle(_vals: &[Value]) -> Result<Value> {
-  Ok(Value::Future(Box::new(future::ready(Ok(Value::Int(42))))))
-}
-
-fn print(vals: &[Value]) -> Result<Value> {
-  println!("*** PRINT: {:?}", vals[0]);
-  Ok(Value::Int(1))
-}

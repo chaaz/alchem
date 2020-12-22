@@ -9,8 +9,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use crate::inline::Inline;
 use std::future::Future;
-use std::task::{Context, Poll};
-use std::pin::Pin;
+use std::fmt;
 
 const FRAMES_MAX: usize = 255;
 
@@ -39,7 +38,7 @@ impl Vm {
     self.globals.insert(name.to_string(), Declared::Native(native));
   }
 
-  pub fn interpret(mut self, source: &str) -> Result<RunFuture> {
+  pub fn interpret(self, source: &str) -> Result<Runner> {
     debug_assert_eq!(self.stack.len(), 0);
     debug_assert_eq!(self.call_stack.len(), 0);
 
@@ -50,46 +49,52 @@ impl Vm {
     let function = Arc::new(function);
     let closure = Arc::new(Closure::new(function, Vec::new()));
 
-    self.stack.push(closure.clone().into());
-    call(closure, 0, self.stack.len())?.perform(&mut self.call_stack)?;
-
-    let ftr = RunFuture {
+    let mut ftr = Runner {
       call_stack: self.call_stack,
       stack: self.stack,
       globals: self.globals,
       open_upvals: self.open_upvals
     };
 
+    ftr.start_closure(closure)?;
     Ok(ftr)
   }
 }
 
-pub struct RunFuture {
+pub struct Runner {
   call_stack: CallStack,
   stack: Stack,
   globals: Globals,
   open_upvals: OpenUpvalues
 }
 
-impl Future for RunFuture {
-  type Output = Result<Value>;
-
-  fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<Value>> {
-    self.run(cx)
-  }
-}
-
-impl RunFuture {
-  pub fn run(&mut self, cx: &mut Context) -> Poll<Result<Value>> {
-    let r = self.try_run(cx);
-    if let Poll::Ready(Err(_)) = &r {
+impl Runner {
+  pub fn run(&mut self) -> Result<Stopped> {
+    let r = self.try_run();
+    if r.is_err() {
       self.debug_stack_trace();
     }
     r
   }
 
-  pub fn try_run(&mut self, cx: &mut Context) -> Poll<Result<Value>> {
-    let RunFuture { call_stack, stack, globals, open_upvals } = self;
+  pub fn run_closure(&mut self, closure: Arc<Closure>) -> Result<Stopped> {
+    self.start_closure(closure)?;
+    self.run()
+  }
+
+  pub fn run_with_value(&mut self, v: Value) -> Result<Stopped> {
+    self.stack.push(v);
+    self.run()
+  }
+
+  fn start_closure(&mut self, closure: Arc<Closure>) -> Result<()> {
+    self.stack.push(closure.clone().into());
+    call_closure(closure, 0, self.stack.len(), true)?.perform(&mut self.call_stack)?;
+    Ok(())
+  }
+
+  fn try_run(&mut self) -> Result<Stopped> {
+    let Runner { call_stack, stack, globals, open_upvals } = self;
 
     #[cfg(feature = "verbose")]
     debug_start();
@@ -104,23 +109,25 @@ impl RunFuture {
           #[cfg(feature = "verbose")]
           debug_instr(stack, *ip, instr);
           *ip += 1;
-          match handle_op(instr, globals, &mut upvals, open_upvals, chunk, slots, stack, ip, cx)? {
+          match handle_op(instr, globals, &mut upvals, open_upvals, chunk, slots, stack, ip)? {
             Handled::StackOp(stack_op) => {
               drop(upvals);
-              stack_op.perform(call_stack)?;
+              let exit = stack_op.perform(call_stack)?;
               if call_stack.len() > FRAMES_MAX {
-                return Poll::Ready(err!(Runtime, "Stack overflow: {}.", call_stack.len()));
+                return err!(Runtime, "Stack overflow: {}.", call_stack.len());
               }
-              if call_stack.is_empty() {
+              if exit || call_stack.is_empty() {
                 #[cfg(feature = "verbose")]
-                debug_end(stack);
-                return Poll::Ready(Ok(stack.pop()));
+                debug_end(stack, exit && !call_stack.is_empty());
+                return Ok(Stopped::Done(stack.pop()));
               }
               break;
             }
-            Handled::Pending => {
-              *ip -= 1;
-              return Poll::Pending;
+            Handled::Native(native_run) => {
+              return Ok(Stopped::Native(native_run));
+            }
+            Handled::Future(ftr) => {
+              return Ok(Stopped::Future(ftr));
             }
             Handled::None => ()
           }
@@ -130,8 +137,8 @@ impl RunFuture {
       }
     }
     #[cfg(feature = "verbose")]
-    debug_end(stack);
-    Poll::Ready(err!(Runtime, "Missing return."))
+    debug_end(stack, false);
+    err!(Runtime, "Missing return.")
   }
 
   fn debug_stack_trace(&self) {
@@ -145,10 +152,21 @@ impl RunFuture {
   }
 }
 
+pub struct NativeRun {
+  native: Native,
+  args: Vec<Value>
+}
+
+impl NativeRun {
+  pub fn run(&mut self, runner: &mut Runner) -> Result<Value> {
+    (self.native)(&self.args, runner)
+  }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn handle_op(
   instr: &Instr, globals: &Globals, upvalues: &mut [ObjUpvalue], open_upvals: &mut OpenUpvalues, chunk: &Chunk,
-  slots: &usize, stack: &mut Stack, ip: &mut usize, cx: &mut Context
+  slots: &usize, stack: &mut Stack, ip: &mut usize
 ) -> Result<Handled> {
   match instr.op() {
     Opcode::Lt => binary_fast(stack, |v, w| v.try_lt(w)),
@@ -236,16 +254,7 @@ fn handle_op(
       }
     }
     Opcode::Await => {
-      let val = stack.pop();
-      let mut ftr = val.into_future();
-      let pinned = Pin::new(ftr.as_mut());
-      match pinned.poll(cx) {
-        Poll::Ready(r) => stack.push(r.unwrap()),
-        Poll::Pending => {
-          stack.push(Value::Future(ftr));
-          return Ok(Handled::Pending);
-        }
-      }
+      return Ok(Handled::Future(stack.pop().into_future()));
     }
   }
 
@@ -265,9 +274,26 @@ fn close_upvalues(list: &[(Arc<Closure>, usize)], val: &mut Value) -> Result<()>
 
 fn rpeek(stack: &Stack, back: usize) -> &Value { stack.get(stack.len() - 1 - back) }
 
+pub enum Stopped {
+  Future(Box<dyn Future<Output = Result<Value>> + 'static + Send + Unpin>),
+  Native(NativeRun),
+  Done(Value)
+}
+
+impl fmt::Debug for Stopped {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    match self {
+      Self::Future(_) => write!(f, "(future)"),
+      Self::Native(_) => write!(f, "(native)"),
+      Self::Done(v) => write!(f, "{:?}", v),
+    }
+  }
+}
+
 enum Handled {
   StackOp(StackOp),
-  Pending,
+  Future(Box<dyn Future<Output = Result<Value>> + 'static + Send + Unpin>),
+  Native(NativeRun),
   None
 }
 
@@ -277,38 +303,45 @@ enum StackOp {
 }
 
 impl StackOp {
-  pub fn perform(self, call_stack: &mut CallStack) -> Result<()> {
+  pub fn perform(self, call_stack: &mut CallStack) -> Result<bool> {
     match self {
-      Self::Push(f) => call_stack.push(f),
-      Self::Pop => drop(call_stack.pop().ok_or_else(|| bad!(Internal, "Can't pop empty call stack."))?)
+      Self::Push(f) => {
+        call_stack.push(f);
+        Ok(false)
+      }
+      Self::Pop => {
+        let frame = call_stack.pop().ok_or_else(|| bad!(Internal, "Can't pop empty call stack."))?;
+        Ok(frame.exit())
+      }
     }
-    Ok(())
   }
 }
 
 fn call_value(stack: &mut Stack, argc: u8) -> Result<Handled> {
   let value = rpeek(stack, argc as usize);
   match value {
-    Value::Closure(f) => Ok(Handled::StackOp(call(f.clone(), argc, stack.len())?)),
-    Value::Native(f) => call_native(*f, argc, stack),
+    Value::Closure(f) => Ok(Handled::StackOp(call_closure(f.clone(), argc, stack.len(), false)?)),
+    Value::Native(f) => Ok(call_native(*f, argc, stack)),
     other => err!(Runtime, "Not a function: {:?}", other)
   }
 }
 
-fn call(closure: Arc<Closure>, argc: u8, stack_len: usize) -> Result<StackOp> {
+fn call_closure(closure: Arc<Closure>, argc: u8, stack_len: usize, exit: bool) -> Result<StackOp> {
   if argc != closure.arity() {
     bail!(Runtime, "Calling arity {} with {} args.", closure.arity(), argc);
   }
-  Ok(StackOp::Push(CallFrame::new(closure, stack_len - (argc as usize) - 1)))
+  Ok(StackOp::Push(CallFrame::new(closure, stack_len - (argc as usize) - 1, exit)))
 }
 
-fn call_native(native: Native, argc: u8, stack: &mut Stack) -> Result<Handled> {
-  let argc = argc as usize;
-  let result = (native)(&stack[stack.len() - argc ..])?;
-  let rem = stack.len() - argc;
-  stack.truncate(rem);
-  *stack.get_mut(rem - 1) = result;
-  Ok(Handled::None)
+fn call_native(native: Native, argc: u8, stack: &mut Stack) -> Handled {
+  let mut args = Vec::new();
+  for _ in 0 .. argc {
+    args.push(stack.pop());
+  }
+  args.reverse();
+  stack.pop(); // once more for the native
+
+  Handled::Native(NativeRun { native, args })
 }
 
 fn unary<F: FnOnce(Value) -> Result<Value>>(stack: &mut Stack, f: F) -> Result<()> {
@@ -333,17 +366,20 @@ fn binary_fast<F: FnOnce(&Value, &Value) -> Value>(stack: &mut Stack, f: F) {
 pub struct CallFrame {
   closure: Arc<Closure>,
   ip: usize,
-  slots: usize
+  slots: usize,
+  exit: bool
 }
 
 impl CallFrame {
-  pub fn new(closure: Arc<Closure>, slots: usize) -> CallFrame { CallFrame { closure, ip: 0, slots } }
+  pub fn new(closure: Arc<Closure>, slots: usize, exit: bool) -> CallFrame { CallFrame { closure, ip: 0, slots, exit } }
 
   pub fn closure(&self) -> &Closure { &self.closure }
   pub fn ip(&self) -> usize { self.ip }
   pub fn ip_mut(&mut self) -> &mut usize { &mut self.ip }
   pub fn slots(&self) -> usize { self.slots }
   pub fn slots_mut(&mut self) -> &mut usize { &mut self.slots }
+  pub fn exit(&self) -> bool { self.exit }
+
   pub fn parts(&mut self) -> (&mut usize, &ObjUpvalues, &Chunk, &usize) {
     (&mut self.ip, self.closure.upvalues(), self.closure.chunk(), &self.slots)
   }
@@ -364,8 +400,8 @@ fn debug_instr(stack: &[Value], ip: usize, instr: &Instr) {
 }
 
 #[cfg(feature = "verbose")]
-fn debug_end(stack: &[Value]) {
-  println!("Final Stack: ");
+fn debug_end(stack: &[Value], early_exit: bool) {
+  println!("Final Stack: (early exit {})", early_exit);
   for (i, v) in stack.iter().enumerate().rev() {
     println!("  {:>0width$} : {:?}", i, v, width = 4);
   }
