@@ -1,10 +1,11 @@
 //! The command-line options for the executable.
 
 use alchem::errors::Result;
+use alchem::native_fn;
 use alchem::value::Value;
 use alchem::vm::{Vm, Runner};
 use clap::{crate_version, App, AppSettings, Arg, ArgMatches};
-use std::future;
+use macro_rules_attribute::macro_rules_attribute;
 // use std::io::{self, BufRead};
 
 /// Get the values from the expected command-line options.
@@ -30,8 +31,8 @@ pub async fn execute() -> Result<()> {
 
 async fn parse_matches(m: ArgMatches<'_>) -> Result<()> {
   match m.value_of("input") {
-    Some(input) => run_file(input).await.map(|_value| ()),
-    None => run_file("fib.alc").await.map(|_value| ())
+    Some(input) => run_file(input).await,
+    None => run_file("fib.alc").await
     // None => repl().await
   }
 }
@@ -40,23 +41,25 @@ async fn run_file(input: &str) -> Result<()> {
   let val = std::fs::read_to_string(input)?;
   let mut vm = Vm::new();
   vm.add_native("print", print);
-  vm.add_native("number", number_async);
-  vm.add_native("recall", recall_sync);
-  println!("{:?}", vm.interpret(&val)?.run()?);
+  vm.add_native("number", number);
+  vm.add_native("recall", recall);
+  println!("{:?}", vm.interpret(&val).await);
   Ok(())
 }
 
-fn number_async(_vals: &[Value], _runner: &mut Runner) -> Result<Value> {
-  Ok(Value::Future(Box::new(future::ready(Ok(Value::Int(42))))))
-}
+#[macro_rules_attribute(native_fn!)]
+async fn number(_vals: Vec<Value>, _runner: &mut Runner) -> Value { Value::Int(42) }
 
-fn print(vals: &[Value], _runner: &mut Runner) -> Result<Value> {
+#[macro_rules_attribute(native_fn!)]
+async fn print(vals: Vec<Value>, _runner: &mut Runner) -> Value {
   println!("*** PRINT: {:?}", vals[0]);
-  Ok(Value::Int(1))
+  Value::Int(1)
 }
 
-fn recall_sync(_vals: &[Value], _runner: &mut Runner) -> Result<Value> {
-  unimplemented!()
+#[macro_rules_attribute(native_fn!)]
+async fn recall(vals: Vec<Value>, runner: &mut Runner) -> Value {
+  let f = vals[0].as_closure();
+  runner.run_closure(f, Vec::new()).await
 }
 
 // async fn repl() -> Result<()> {

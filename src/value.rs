@@ -4,8 +4,6 @@ use crate::common::{Closure, Function, Native};
 use crate::errors::Result;
 use std::cmp::PartialEq;
 use std::fmt;
-use std::future::Future;
-use std::mem;
 use std::sync::Arc;
 
 pub enum Value {
@@ -15,7 +13,6 @@ pub enum Value {
   String(Arc<str>),
   Closure(Arc<Closure>),
   Native(Native),
-  Future(Box<dyn Future<Output = Result<Value>> + 'static + Send + Unpin>),
   Void
 }
 
@@ -28,7 +25,6 @@ impl PartialEq for Value {
       (Self::String(v1), Self::String(v2)) => v1 == v2,
       (Self::Closure(v1), Self::Closure(v2)) => Arc::ptr_eq(v1, v2),
       (Self::Native(v1), Self::Native(v2)) => v1 as *const Native == v2 as *const Native,
-      (Self::Future(_), Self::Future(_)) => false,
       (Self::Void, Self::Void) => true,
       _ => false
     }
@@ -44,7 +40,6 @@ impl fmt::Debug for Value {
       Self::String(v) => write!(f, "\"{}\"", v),
       Self::Closure(v) => write!(f, "{:?}", v),
       Self::Native(_) => write!(f, "(native)"),
-      Self::Future(_) => write!(f, "(future)"),
       Self::Void => write!(f, "(void)")
     }
   }
@@ -78,24 +73,27 @@ impl From<Arc<Closure>> for Value {
   fn from(v: Arc<Closure>) -> Value { Value::Closure(v) }
 }
 
-impl From<Box<dyn Future<Output = Result<Value>> + 'static + Send + Unpin>> for Value {
-  fn from(v: Box<dyn Future<Output = Result<Value>> + 'static + Send + Unpin>) -> Value { Value::Future(v) }
-}
-
 impl Value {
   pub fn cloneable(&self) -> bool { true }
 
-  pub fn try_bool(&self) -> Result<bool> {
+  pub fn as_int(&self) -> i32 {
     match self {
-      Self::Bool(v) => Ok(*v),
-      _ => err!(Compile, "Not a boolean: {:?}", self)
+      Self::Int(v) => *v,
+      _ => panic!("Not an int: {:?}", self)
     }
   }
 
-  pub fn into_future(self) -> Box<dyn Future<Output = Result<Value>> + 'static + Send + Unpin> {
+  pub fn try_bool(&self) -> bool {
     match self {
-      Self::Future(v) => v,
-      _ => panic!("Not a future: {:?}", self)
+      Self::Bool(v) => *v,
+      _ => panic!("Not a boolean: {:?}", self)
+    }
+  }
+
+  pub fn as_closure(&self) -> Arc<Closure> {
+    match self {
+      Self::Closure(v) => v.clone(),
+      _ => panic!("Not a closure: {:?}", self)
     }
   }
 
@@ -109,23 +107,22 @@ impl Value {
       Self::String(v) => Self::String(v.clone()),
       Self::Closure(v) => Self::Closure(v.clone()),
       Self::Native(v) => Self::Native(*v),
-      other @ Self::Future(_) => mem::replace(other, Self::Void),
       Self::Void => panic!("Cannot access an evaculated value.")
     }
   }
 
-  pub fn try_negate(self) -> Result<Value> {
+  pub fn try_negate(&self) -> Value {
     match self {
-      Self::Float(v) => Ok(Self::Float(-v)),
-      Self::Int(v) => Ok(Self::Int(-v)),
-      _ => bail!(Runtime, "No negation for {:?}", self)
+      Self::Float(v) => Self::Float(-*v),
+      Self::Int(v) => Self::Int(-*v),
+      _ => panic!("No negation for {:?}", self)
     }
   }
 
-  pub fn try_not(self) -> Result<Value> {
+  pub fn try_not(&self) -> Value {
     match self {
-      Self::Bool(v) => Ok(Self::Bool(!v)),
-      _ => bail!(Runtime, "No negation for {:?}", self)
+      Self::Bool(v) => Self::Bool(!*v),
+      _ => panic!("No negation for {:?}", self)
     }
   }
 
@@ -150,43 +147,43 @@ impl Value {
     }
   }
 
-  pub fn try_multiply(self, other: Value) -> Result<Value> {
+  pub fn try_multiply(&self, other: &Value) -> Value {
     match (self, other) {
-      (Self::Float(v1), Value::Float(v2)) => Ok(Self::Float(v1 * v2)),
-      (Self::Int(v1), Value::Int(v2)) => Ok(Self::Int(v1 * v2)),
-      (o1, o2) => bail!(Runtime, "Can't multiply mismatch types: {:?}, {:?}", o1, o2)
+      (Self::Float(v1), Value::Float(v2)) => Self::Float(v1 * v2),
+      (Self::Int(v1), Value::Int(v2)) => Self::Int(v1 * v2),
+      (o1, o2) => panic!("Can't multiply mismatch types: {:?}, {:?}", o1, o2)
     }
   }
 
-  pub fn try_divide(self, other: Value) -> Result<Value> {
+  pub fn try_divide(&self, other: &Value) -> Value {
     match (self, other) {
-      (Self::Float(v1), Value::Float(v2)) => Ok(Self::Float(v1 / v2)),
-      (Self::Int(v1), Value::Int(v2)) => Ok(Self::Int(v1 / v2)),
-      (o1, o2) => bail!(Runtime, "Can't divide mismatch types: {:?}, {:?}", o1, o2)
+      (Self::Float(v1), Value::Float(v2)) => Self::Float(v1 / v2),
+      (Self::Int(v1), Value::Int(v2)) => Self::Int(v1 / v2),
+      (o1, o2) => panic!("Can't divide mismatch types: {:?}, {:?}", o1, o2)
     }
   }
 
-  pub fn try_mod(self, other: Value) -> Result<Value> {
+  pub fn try_mod(&self, other: &Value) -> Value {
     match (self, other) {
-      (Self::Float(v1), Value::Float(v2)) => Ok(Self::Float(v1 % v2)),
-      (Self::Int(v1), Value::Int(v2)) => Ok(Self::Int(v1 % v2)),
-      (o1, o2) => bail!(Runtime, "Can't divide mismatch types: {:?}, {:?}", o1, o2)
+      (Self::Float(v1), Value::Float(v2)) => Self::Float(v1 % v2),
+      (Self::Int(v1), Value::Int(v2)) => Self::Int(v1 % v2),
+      (o1, o2) => panic!("Can't divide mismatch types: {:?}, {:?}", o1, o2)
     }
   }
 
-  pub fn try_gt(self, other: Value) -> Result<Value> {
+  pub fn try_gt(&self, other: &Value) -> Value {
     match (self, other) {
-      (Self::Float(v1), Value::Float(v2)) => Ok(Self::Bool(v1 > v2)),
-      (Self::Int(v1), Value::Int(v2)) => Ok(Self::Bool(v1 > v2)),
-      (o1, o2) => bail!(Runtime, "Can't compare types: {:?}, {:?}", o1, o2)
+      (Self::Float(v1), Value::Float(v2)) => Self::Bool(v1 > v2),
+      (Self::Int(v1), Value::Int(v2)) => Self::Bool(v1 > v2),
+      (o1, o2) => panic!("Can't compare types: {:?}, {:?}", o1, o2)
     }
   }
 
-  pub fn try_gte(self, other: Value) -> Result<Value> {
+  pub fn try_gte(&self, other: &Value) -> Value {
     match (self, other) {
-      (Self::Float(v1), Value::Float(v2)) => Ok(Self::Bool(v1 >= v2)),
-      (Self::Int(v1), Value::Int(v2)) => Ok(Self::Bool(v1 >= v2)),
-      (o1, o2) => bail!(Runtime, "Can't compare types: {:?}, {:?}", o1, o2)
+      (Self::Float(v1), Value::Float(v2)) => Self::Bool(v1 >= v2),
+      (Self::Int(v1), Value::Int(v2)) => Self::Bool(v1 >= v2),
+      (o1, o2) => panic!("Can't compare types: {:?}, {:?}", o1, o2)
     }
   }
 
@@ -198,45 +195,45 @@ impl Value {
     }
   }
 
-  pub fn try_lte(self, other: Value) -> Result<Value> {
+  pub fn try_lte(&self, other: &Value) -> Value {
     match (self, other) {
-      (Self::Float(v1), Value::Float(v2)) => Ok(Self::Bool(v1 <= v2)),
-      (Self::Int(v1), Value::Int(v2)) => Ok(Self::Bool(v1 <= v2)),
-      (o1, o2) => bail!(Runtime, "Can't compare types: {:?}, {:?}", o1, o2)
+      (Self::Float(v1), Value::Float(v2)) => Self::Bool(v1 <= v2),
+      (Self::Int(v1), Value::Int(v2)) => Self::Bool(v1 <= v2),
+      (o1, o2) => panic!("Can't compare types: {:?}, {:?}", o1, o2)
     }
   }
 
-  pub fn try_eq(self, other: Value) -> Result<Value> {
+  pub fn try_eq(&self, other: &Value) -> Value {
     match (self, other) {
-      (Self::Float(v1), Value::Float(v2)) => Ok(Self::Bool((v1 - v2).abs() < f64::EPSILON)),
-      (Self::Int(v1), Value::Int(v2)) => Ok(Self::Bool(v1 == v2)),
-      (Self::Bool(v1), Value::Bool(v2)) => Ok(Self::Bool(v1 == v2)),
-      (Self::String(v1), Value::String(v2)) => Ok(Self::Bool(v1 == v2)),
-      (o1, o2) => bail!(Runtime, "Can't compare types: {:?}, {:?}", o1, o2)
+      (Self::Float(v1), Value::Float(v2)) => Self::Bool((v1 - v2).abs() < f64::EPSILON),
+      (Self::Int(v1), Value::Int(v2)) => Self::Bool(v1 == v2),
+      (Self::Bool(v1), Value::Bool(v2)) => Self::Bool(v1 == v2),
+      (Self::String(v1), Value::String(v2)) => Self::Bool(v1 == v2),
+      (o1, o2) => panic!("Can't compare types: {:?}, {:?}", o1, o2)
     }
   }
 
-  pub fn try_neq(self, other: Value) -> Result<Value> {
+  pub fn try_neq(&self, other: &Value) -> Value {
     match (self, other) {
-      (Self::Float(v1), Value::Float(v2)) => Ok(Self::Bool((v1 - v2).abs() >= f64::EPSILON)),
-      (Self::Int(v1), Value::Int(v2)) => Ok(Self::Bool(v1 != v2)),
-      (Self::Bool(v1), Value::Bool(v2)) => Ok(Self::Bool(v1 != v2)),
-      (Self::String(v1), Value::String(v2)) => Ok(Self::Bool(v1 != v2)),
-      (o1, o2) => bail!(Runtime, "Can't compare types: {:?}, {:?}", o1, o2)
+      (Self::Float(v1), Value::Float(v2)) => Self::Bool((v1 - v2).abs() >= f64::EPSILON),
+      (Self::Int(v1), Value::Int(v2)) => Self::Bool(v1 != v2),
+      (Self::Bool(v1), Value::Bool(v2)) => Self::Bool(v1 != v2),
+      (Self::String(v1), Value::String(v2)) => Self::Bool(v1 != v2),
+      (o1, o2) => panic!("Can't compare types: {:?}, {:?}", o1, o2)
     }
   }
 
-  pub fn try_and(self, other: Value) -> Result<Value> {
+  pub fn try_and(&self, other: &Value) -> Value {
     match (self, other) {
-      (Self::Bool(v1), Value::Bool(v2)) => Ok(Self::Bool(v1 && v2)),
-      (o1, o2) => bail!(Runtime, "Can't compare types: {:?}, {:?}", o1, o2)
+      (Self::Bool(v1), Value::Bool(v2)) => Self::Bool(*v1 && *v2),
+      (o1, o2) => panic!("Can't compare types: {:?}, {:?}", o1, o2)
     }
   }
 
-  pub fn try_or(self, other: Value) -> Result<Value> {
+  pub fn try_or(&self, other: &Value) -> Value {
     match (self, other) {
-      (Self::Bool(v1), Value::Bool(v2)) => Ok(Self::Bool(v1 || v2)),
-      (o1, o2) => bail!(Runtime, "Can't compare types: {:?}, {:?}", o1, o2)
+      (Self::Bool(v1), Value::Bool(v2)) => Self::Bool(*v1 || *v2),
+      (o1, o2) => panic!("Can't compare types: {:?}, {:?}", o1, o2)
     }
   }
 }
@@ -351,6 +348,6 @@ mod test {
 
   #[test]
   fn value_clone() {
-    assert_eq!(Value::Float(1.0).try_clone().unwrap(), Value::Float(1.0));
+    assert_eq!(Value::Float(1.0).shift(), Value::Float(1.0));
   }
 }

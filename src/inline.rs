@@ -46,6 +46,28 @@ impl<T> Inline<T> {
   }
 
   #[inline]
+  pub fn append_vec(&mut self, mut vs: Vec<T>) {
+    unsafe {
+      let other: *const [T] = vs.as_slice();
+      let count = (*other).len();
+      let len = self.len();
+      ptr::copy_nonoverlapping(other as *const T, (self.inline.as_mut_ptr() as *mut T).add(len), count);
+      self.len += count;
+      vs.set_len(0);
+    }
+  }
+
+  // #[inline]
+  // pub fn append_vec(&mut self, vs: Vec<T>)
+  // where
+  //   T: Clone
+  // {
+  //   for v in vs {
+  //     self.push(v)
+  //   }
+  // }
+
+  #[inline]
   pub fn pop(&mut self) -> T {
     unsafe {
       let myptr = self.inline.as_mut_ptr() as *const T;
@@ -101,4 +123,9 @@ impl<T> DerefMut for Inline<T> {
       slice::from_raw_parts_mut(myptr, self.len)
     }
   }
+}
+
+#[cfg(test)]
+mod test {
+  // TODO : definitely needs tests
 }

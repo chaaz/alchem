@@ -6,6 +6,7 @@
 
 #[macro_use]
 pub mod errors;
+#[macro_use]
 pub(crate) mod common;
 pub(crate) mod compiler;
 pub(crate) mod scanner;

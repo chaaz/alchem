@@ -36,7 +36,7 @@ impl<'s> Iterator for Scanner<'s> {
         '}' => TokenType::CloseCurl,
         ',' => TokenType::Comma,
         '!' => self.if_next('=', TokenType::NotEq, TokenType::Bang),
-        '<' => self.if_next3('=', '-', TokenType::Lte, TokenType::PointLeft, TokenType::Lt),
+        '<' => self.if_next('=', TokenType::Lte, TokenType::Lt),
         '=' => self.if_next('=', TokenType::DoubleEq, TokenType::Equals),
         '>' => self.if_next('=', TokenType::Gte, TokenType::Gt),
         '"' => self.next_string(st),
@@ -160,22 +160,6 @@ impl<'s> Scanner<'s> {
       _ => if_f
     }
   }
-
-  fn if_next3(
-    &mut self, t1: char, t2: char, if_t1: TokenType<'s>, if_t2: TokenType<'s>, if_f: TokenType<'s>
-  ) -> TokenType<'s> {
-    match self.peek() {
-      Some((_, x)) if x == t1 => {
-        self.iter.next();
-        if_t1
-      }
-      Some((_, x)) if x == t2 => {
-        self.iter.next();
-        if_t2
-      }
-      _ => if_f
-    }
-  }
 }
 
 #[derive(Debug)]
@@ -198,7 +182,6 @@ pub enum TokenType<'s> {
   Eof,
   Comma,
   Equals,
-  PointLeft,
   Semi,
   Colon,
   OpenCurl,
@@ -244,7 +227,6 @@ impl<'s> TokenType<'s> {
       Self::Eof => TokenTypeDiscr::Eof,
       Self::Comma => TokenTypeDiscr::Comma,
       Self::Equals => TokenTypeDiscr::Equals,
-      Self::PointLeft => TokenTypeDiscr::PointLeft,
       Self::Semi => TokenTypeDiscr::Semi,
       Self::Colon => TokenTypeDiscr::Colon,
       Self::OpenCurl => TokenTypeDiscr::OpenCurl,
@@ -290,7 +272,6 @@ pub enum TokenTypeDiscr {
   Eof,
   Comma,
   Equals,
-  PointLeft,
   Semi,
   Colon,
   OpenCurl,

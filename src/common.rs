@@ -5,10 +5,12 @@ use super::value::{Value, Declared};
 use std::fmt;
 use std::sync::{Arc, Mutex};
 use super::vm::Runner;
+use std::pin::Pin;
+use std::future::Future;
 
 const MAX_CONSTANTS: usize = 255;
 
-pub type Native = fn(&[Value], &mut Runner) -> Result<Value>;
+pub type Native = for<'r> fn(Vec<Value>, &'r mut Runner) -> Pin<Box<dyn Future<Output = Value> + Send + 'r>>;
 pub type ObjUpvalues = Mutex<Vec<ObjUpvalue>>;
 
 pub struct Function {
@@ -100,9 +102,8 @@ impl Closure {
   pub fn function(&self) -> &Function { &self.function }
   pub fn upvalues(&self) -> &ObjUpvalues { &self.upvalues }
 
-  pub fn flip_upval(&self, index: usize, value: Value) -> Result<()> {
-    self.upvalues.try_lock()?.get_mut(index).unwrap().flip(value)?;
-    Ok(())
+  pub fn flip_upval(&self, index: usize, value: Value) {
+    self.upvalues.try_lock().unwrap().get_mut(index).unwrap().flip(value);
   }
 }
 
@@ -139,13 +140,12 @@ impl ObjUpvalue {
     }
   }
 
-  pub fn flip(&mut self, val: Value) -> Result<()> {
+  pub fn flip(&mut self, val: Value) {
     match self {
       Self::Open(_) => {
         *self = Self::Closed(val);
-        Ok(())
       }
-      _ => err!(Internal, "ObjUpvalue already flipped.")
+      _ => panic!("ObjUpvalue already flipped.")
     }
   }
 
@@ -286,14 +286,43 @@ pub enum Opcode {
   CloseUpvalue,
   JumpIfFalse(u16),
   Jump(u16),
-  Call(u8),
-  Await
+  Call(u8)
 }
 
 impl Opcode {
   pub fn initial_jump_if_false() -> Opcode { Self::JumpIfFalse(0) }
   pub fn initial_jump() -> Opcode { Self::Jump(0) }
 }
+
+
+// convert
+//
+// async fn print(vals: Vec<Value>, runner: &mut Runner) -> Value
+//
+// to
+//
+// fn print<'r>(vals: Vec<Value>, _runner: &'r mut Runner) -> Pin<Box<dyn Future<Output = Value> + Send + 'r>>
+
+#[macro_export]
+macro_rules! native_fn {(
+  $( #[$attr:meta] )* // includes doc strings
+  $pub:vis
+  async
+  fn $fname:ident ($arg1_i:ident : $arg1_t:ty, $arg2_i:ident : &mut $arg2_t:ty) -> $Ret:ty
+  {
+      $($body:tt)*
+  }
+) => (
+  $( #[$attr] )*
+  $pub
+  fn $fname<'r> ($arg1_i : $arg1_t, $arg2_i : &'r mut $arg2_t) -> ::std::pin::Pin<::std::boxed::Box<
+      dyn ::std::future::Future<Output = $Ret>
+          + ::std::marker::Send + 'r
+  >>
+  {
+      ::std::boxed::Box::pin(async move { $($body)* })
+  }
+)}
 
 #[cfg(test)]
 mod test {
@@ -309,7 +338,7 @@ mod test {
   #[test]
   fn const_int() {
     let mut chunk = Chunk::new();
-    assert_eq!(chunk.add_constant(Value::Float(1.2)).unwrap(), 0);
+    assert_eq!(chunk.add_constant(Declared::Float(1.2)).unwrap(), 0);
     assert_eq!(chunk.add_code_anon(Opcode::Constant(0)), 0);
     assert_eq!(chunk.code_len(), 1);
     assert_eq!(chunk.constants_len(), 1);
@@ -318,7 +347,7 @@ mod test {
   #[test]
   fn value_array() {
     let mut va = ValueArray::new();
-    assert_eq!(va.add(Value::Float(3.0)).unwrap(), 0);
+    assert_eq!(va.add(Declared::Float(3.0)).unwrap(), 0);
     assert_eq!(va.values.len(), 1);
   }
 }

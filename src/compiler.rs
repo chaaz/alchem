@@ -143,12 +143,6 @@ impl<'s> Compiler<'s> {
           self.expression()?;
           break;
         }
-        TokenTypeDiscr::PointLeft => {
-          self.advance();
-          self.expression()?;
-          self.emit_instr(Opcode::Await);
-          break;
-        }
         TokenTypeDiscr::Eof => break,
         _ => {
           self.assignment()?;
@@ -204,19 +198,8 @@ impl<'s> Compiler<'s> {
   fn assignment(&mut self) -> Result<()> {
     if self.token_check(TokenTypeDiscr::Identifier) {
       self.parse_variable()?;
-      let is_async = match self.current_ttd() {
-        TokenTypeDiscr::Equals => false,
-        TokenTypeDiscr::PointLeft => true,
-        _ => {
-          self.error_current("Unknown assignment operator.");
-          false
-        }
-      };
-      self.advance();
+      self.consume(TokenTypeDiscr::Equals);
       self.expression()?;
-      if is_async {
-        self.emit_instr(Opcode::Await);
-      }
       self.consume(TokenTypeDiscr::Semi);
       self.mark_initialized();
       Ok(())
@@ -696,7 +679,6 @@ fn construct_rules() -> HashMap<TokenTypeDiscr, Rule> {
   rules.insert(TokenTypeDiscr::Eof, Rule::new(None, None, Precedence::None));
   rules.insert(TokenTypeDiscr::Comma, Rule::new(None, None, Precedence::None));
   rules.insert(TokenTypeDiscr::Equals, Rule::new(None, None, Precedence::None));
-  rules.insert(TokenTypeDiscr::PointLeft, Rule::new(None, None, Precedence::None));
   rules.insert(TokenTypeDiscr::Semi, Rule::new(None, None, Precedence::None));
   rules.insert(TokenTypeDiscr::Colon, Rule::new(None, None, Precedence::None));
   rules.insert(TokenTypeDiscr::OpenCurl, Rule::new(None, None, Precedence::None));
