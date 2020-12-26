@@ -1,7 +1,7 @@
 //! The alchem compiler.
 
 use crate::common::{Chunk, Function, Instr, Opcode, Upval};
-use crate::errors::{Error, Result};
+use crate::errors::Error;
 use crate::scanner::{Scanner, Token, TokenType, TokenTypeDiscr};
 use crate::value::Declared;
 use lazy_static::lazy_static;
@@ -15,7 +15,7 @@ lazy_static! {
   static ref RULES: HashMap<TokenTypeDiscr, Rule> = construct_rules();
 }
 
-pub fn compile(source: &str) -> Result<Function> {
+pub fn compile(source: &str) -> Function {
   let scanner = Scanner::new(source);
   let compiler = Compiler::new(scanner);
   compiler.compile()
@@ -46,15 +46,15 @@ impl<'s> Compiler<'s> {
     compiler
   }
 
-  pub fn compile(mut self) -> Result<Function> {
+  pub fn compile(mut self) -> Function {
     self.begin_scope();
-    self.body()?;
+    self.body();
     self.emit_instr(Opcode::Return);
 
     if self.had_error {
-      bail!(Compile, "previous errors.");
+      panic!("previous errors.");
     }
-    Ok(self.end_compiler())
+    self.end_compiler()
   }
 
   fn advance(&mut self) {
@@ -107,9 +107,9 @@ impl<'s> Compiler<'s> {
     self.current_chunk().code_len() - 1
   }
 
-  fn patch_jump(&mut self, offset: Jump) -> Result<()> {
+  fn patch_jump(&mut self, offset: Jump) {
     let jump = (self.current_chunk().code_len() - offset - 1) as u16;
-    self.current_chunk().patch_jump(offset, jump)
+    self.current_chunk().patch_jump(offset, jump);
   }
 
   fn current_chunk(&mut self) -> &mut Chunk { self.top_scope_mut().function.chunk_mut() }
@@ -135,31 +135,29 @@ impl<'s> Compiler<'s> {
     scope
   }
 
-  fn body(&mut self) -> Result<()> {
+  fn body(&mut self) {
     loop {
       match self.current_ttd() {
         TokenTypeDiscr::Equals => {
           self.advance();
-          self.expression()?;
+          self.expression();
           break;
         }
         TokenTypeDiscr::Eof => break,
         _ => {
-          self.assignment()?;
+          self.assignment();
           if self.panic_mode {
             self.synchronize();
           }
         }
       }
     }
-    Ok(())
   }
 
-  fn block_content(&mut self) -> Result<()> {
+  fn block_content(&mut self) {
     self.begin_scope();
-    self.body()?;
+    self.body();
     self.end_scope();
-    Ok(())
   }
 
   fn begin_scope(&mut self) { self.top_scope_mut().incr_depth(); }
@@ -195,62 +193,59 @@ impl<'s> Compiler<'s> {
     }
   }
 
-  fn assignment(&mut self) -> Result<()> {
+  fn assignment(&mut self) {
     if self.token_check(TokenTypeDiscr::Identifier) {
-      self.parse_variable()?;
+      self.parse_variable();
       self.consume(TokenTypeDiscr::Equals);
-      self.expression()?;
+      self.expression();
       self.consume(TokenTypeDiscr::Semi);
       self.mark_initialized();
-      Ok(())
     } else {
-      err!(Compile, "Unexpected assignment token {:?}", self.current)
+      panic!("Unexpected assignment token {:?}", self.current)
     }
   }
 
   fn mark_initialized(&mut self) { self.top_scope_mut().mark_last_initialized(); }
 
-  fn parse_variable(&mut self) -> Result<()> {
+  fn parse_variable(&mut self) {
     self.consume(TokenTypeDiscr::Identifier);
     if let TokenType::Identifier(s) = self.previous.token_type() {
       let name = s.to_string();
       self.declare_variable(name)
     } else {
-      err!(Compile, "Unexpected token for parse variable: {:?}", self.previous)
+      panic!("Unexpected token for parse variable: {:?}", self.previous)
     }
   }
 
-  fn declare_variable(&mut self, name: String) -> Result<()> {
+  fn declare_variable(&mut self, name: String) {
     if self.top_scope().defined(&name) {
-      bail!(Runtime, "Already defined variable {}", name);
+      panic!("Already defined variable {}", name);
     }
     self.add_local(name)
   }
 
-  fn add_local(&mut self, name: String) -> Result<()> {
+  fn add_local(&mut self, name: String) {
     let local = Local::new(name);
     if self.top_scope().len() > MAX_LOCALS {
-      bail!(Runtime, "Too many locals: {}", self.top_scope().len());
+      panic!("Too many locals: {}", self.top_scope().len());
     }
     self.top_scope_mut().add_local(local);
-    Ok(())
   }
 
-  fn expression(&mut self) -> Result<()> { self.parse_precendence(Precedence::Or) }
+  fn expression(&mut self) { self.parse_precendence(Precedence::Or) }
 
-  fn block(&mut self) -> Result<()> {
+  fn block(&mut self) {
     self.consume(TokenTypeDiscr::OpenCurl);
-    self.block_content()?;
+    self.block_content();
     self.consume(TokenTypeDiscr::CloseCurl);
-    Ok(())
   }
 
-  fn literal(&mut self) -> Result<()> {
+  fn literal(&mut self) {
     // `self.emit_value(to_value::<$t>($v)?)` doesn't work because of
     // https://github.com/rust-lang/rust/issues/56254
     macro_rules! emit_value {
       ($v:tt, $t:ty) => {{
-        let to_valued = to_value::<$t>($v)?;
+        let to_valued = to_value::<$t>($v);
         self.emit_value(to_valued)
       }};
     }
@@ -261,92 +256,89 @@ impl<'s> Compiler<'s> {
       TokenType::StringLit(v) => emit_value!(v, String),
       TokenType::TrueLit => self.emit_value(Declared::Bool(true)),
       TokenType::FalseLit => self.emit_value(Declared::Bool(false)),
-      other => bail!(Compile, "Unexpected literal {:?}", other)
+      other => panic!("Unexpected literal {:?}", other)
     }
   }
 
-  fn variable(&mut self) -> Result<()> { self.named_variable() }
+  fn variable(&mut self) { self.named_variable() }
 
-  fn named_variable(&mut self) -> Result<()> {
+  fn named_variable(&mut self) {
     if let TokenType::Identifier(s) = self.previous.token_type() {
       let name = s.to_string();
-      if let Some(c) = self.resolve_local(&name)? {
+      if let Some(c) = self.resolve_local(&name) {
         self.emit_instr(Opcode::GetLocal(c));
-      } else if let Some(u) = self.resolve_upval(&name)? {
+      } else if let Some(u) = self.resolve_upval(&name) {
         self.emit_instr(Opcode::GetUpval(u));
       } else {
-        let g = self.add_constant(name.into())?;
+        let g = self.add_constant(name.into());
         self.emit_instr(Opcode::GetGlobal(g));
       }
-      Ok(())
     } else {
-      err!(Compile, "Unexpected token for named variable {:?}", self.previous)
+      panic!("Unexpected token for named variable {:?}", self.previous)
     }
   }
 
-  fn resolve_local(&self, name: &str) -> Result<Option<usize>> { self.top_scope().resolve_local(name) }
+  fn resolve_local(&self, name: &str) -> Option<usize> { self.top_scope().resolve_local(name) }
 
-  fn resolve_upval(&mut self, name: &str) -> Result<Option<usize>> {
+  fn resolve_upval(&mut self, name: &str) -> Option<usize> {
     let scope_ind = self.scope.len() - 1;
     self.resolve_upval_recurse(name, scope_ind)
   }
 
-  fn resolve_upval_recurse(&mut self, name: &str, scope_ind: usize) -> Result<Option<usize>> {
+  fn resolve_upval_recurse(&mut self, name: &str, scope_ind: usize) -> Option<usize> {
     if scope_ind == 0 {
-      return Ok(None);
+      return None;
     }
 
-    let prev_local = self.scope_at(scope_ind - 1).unwrap().resolve_local(name)?;
+    let prev_local = self.scope_at(scope_ind - 1).unwrap().resolve_local(name);
     if let Some(i) = prev_local {
       self.scope_at_mut(scope_ind - 1).unwrap().locals_mut()[i].set_captured(true);
-      return Ok(Some(self.scope_at_mut(scope_ind).unwrap().add_upval(i, true)));
+      return Some(self.scope_at_mut(scope_ind).unwrap().add_upval(i, true));
     }
 
-    let prev_upval = self.resolve_upval_recurse(name, scope_ind - 1)?;
+    let prev_upval = self.resolve_upval_recurse(name, scope_ind - 1);
     if let Some(i) = prev_upval {
-      return Ok(Some(self.scope_at_mut(scope_ind).unwrap().add_upval(i, false)));
+      return Some(self.scope_at_mut(scope_ind).unwrap().add_upval(i, false));
     }
 
-    Ok(None)
+    None
   }
 
-  fn grouping(&mut self) -> Result<()> {
-    self.expression()?;
+  fn grouping(&mut self) {
+    self.expression();
     self.consume(TokenTypeDiscr::CloseParen);
-    Ok(())
   }
 
-  fn if_block(&mut self) -> Result<()> {
-    self.expression()?;
+  fn if_block(&mut self) {
+    self.expression();
     let false_jump = self.emit_jump(Opcode::initial_jump_if_false());
     self.emit_instr(Opcode::Pop);
-    self.block()?;
+    self.block();
     let done_jump = self.emit_jump(Opcode::initial_jump());
-    self.patch_jump(false_jump)?;
+    self.patch_jump(false_jump);
     self.emit_instr(Opcode::Pop);
 
     let mut d2_jumps = Vec::new();
     while let TokenTypeDiscr::ElseifWord = self.current_ttd() {
       self.consume(TokenTypeDiscr::ElseifWord);
-      self.expression()?;
+      self.expression();
       let f2_jump = self.emit_jump(Opcode::initial_jump_if_false());
       self.emit_instr(Opcode::Pop);
-      self.block()?;
+      self.block();
       d2_jumps.push(self.emit_jump(Opcode::initial_jump()));
-      self.patch_jump(f2_jump)?;
+      self.patch_jump(f2_jump);
       self.emit_instr(Opcode::Pop);
     }
 
     self.consume(TokenTypeDiscr::ElseWord);
-    self.block()?;
-    self.patch_jump(done_jump)?;
+    self.block();
+    self.patch_jump(done_jump);
     for jump in d2_jumps {
-      self.patch_jump(jump)?;
+      self.patch_jump(jump);
     }
-    Ok(())
   }
 
-  fn fn_sync(&mut self) -> Result<()> {
+  fn fn_sync(&mut self) {
     self.push_scope();
     self.begin_scope();
 
@@ -355,13 +347,13 @@ impl<'s> Compiler<'s> {
     while self.current_ttd() != TokenTypeDiscr::CloseParen {
       let arity = self.scope_function().arity();
       if !separated {
-        bail!(Compile, "Missing comma after parameter {}.", arity - 1);
+        panic!("Missing comma after parameter {}.", arity - 1);
       }
       if arity == 255 {
-        bail!(Runtime, "More than {} parameters.", self.scope_function().arity())
+        panic!("More than {} parameters.", self.scope_function().arity())
       }
       self.scope_function_mut().incr_arity();
-      self.parse_variable()?;
+      self.parse_variable();
       self.mark_initialized();
 
       separated = false;
@@ -372,31 +364,30 @@ impl<'s> Compiler<'s> {
     }
     self.consume(TokenTypeDiscr::CloseParen);
     self.consume(TokenTypeDiscr::OpenCurl);
-    self.body()?;
+    self.body();
     self.consume(TokenTypeDiscr::CloseCurl);
     self.emit_instr(Opcode::Return);
 
     let scope = self.pop_scope();
-    self.emit_closure(scope)
+    self.emit_closure(scope);
   }
 
-  fn call(&mut self) -> Result<()> {
-    let arg_count = self.argument_list()?;
+  fn call(&mut self) {
+    let arg_count = self.argument_list();
     self.emit_instr(Opcode::Call(arg_count));
-    Ok(())
   }
 
-  fn argument_list(&mut self) -> Result<u8> {
+  fn argument_list(&mut self) -> u8 {
     let mut count = 0;
     let mut separated = true;
     while self.current_ttd() != TokenTypeDiscr::CloseParen {
       if count == 255 {
-        bail!(Compile, "More than {} function arguments.", count);
+        panic!("More than {} function arguments.", count);
       }
       if !separated {
-        bail!(Compile, "Missing comma after argument.");
+        panic!("Missing comma after argument.");
       }
-      self.expression()?;
+      self.expression();
       count += 1;
 
       separated = false;
@@ -406,26 +397,25 @@ impl<'s> Compiler<'s> {
       }
     }
     self.consume(TokenTypeDiscr::CloseParen);
-    Ok(count)
+    count
   }
 
-  fn unary(&mut self) -> Result<()> {
+  fn unary(&mut self) {
     let ttd = self.previous_ttd();
-    self.parse_precendence(Precedence::Unary)?;
+    self.parse_precendence(Precedence::Unary);
 
     match ttd {
       TokenTypeDiscr::Minus => self.emit_instr(Opcode::Negate),
       TokenTypeDiscr::Bang => self.emit_instr(Opcode::Not),
-      other => bail!(Compile, "Unexpected unary op: {:?}", other)
+      other => panic!("Unexpected unary op: {:?}", other)
     }
-    Ok(())
   }
 
-  fn binary(&mut self) -> Result<()> {
+  fn binary(&mut self) {
     let ttd = self.previous_ttd();
-    let precedence = self.get_rule(ttd)?.precedence().up()?;
+    let precedence = self.get_rule(ttd).precedence().up();
 
-    self.parse_precendence(precedence)?;
+    self.parse_precendence(precedence);
 
     match ttd {
       TokenTypeDiscr::Plus => self.emit_instr(Opcode::Add),
@@ -439,66 +429,59 @@ impl<'s> Compiler<'s> {
       TokenTypeDiscr::Lte => self.emit_instr(Opcode::Lte),
       TokenTypeDiscr::DoubleEq => self.emit_instr(Opcode::Equals),
       TokenTypeDiscr::NotEq => self.emit_instr(Opcode::NotEquals),
-      other => bail!(Compile, "Unexpected binary op: {:?}", other)
+      other => panic!("Unexpected binary op: {:?}", other)
     }
-    Ok(())
   }
 
-  fn and(&mut self) -> Result<()> {
+  fn and(&mut self) {
     let end_jump = self.emit_jump(Opcode::initial_jump_if_false());
     self.emit_instr(Opcode::Pop);
-    self.parse_precendence(Precedence::And)?;
-    self.patch_jump(end_jump)
+    self.parse_precendence(Precedence::And);
+    self.patch_jump(end_jump);
   }
 
-  fn or(&mut self) -> Result<()> {
+  fn or(&mut self) {
     let else_jump = self.emit_jump(Opcode::initial_jump_if_false());
     let end_jump = self.emit_jump(Opcode::initial_jump());
-    self.patch_jump(else_jump)?;
+    self.patch_jump(else_jump);
     self.emit_instr(Opcode::Pop);
-    self.parse_precendence(Precedence::Or)?;
+    self.parse_precendence(Precedence::Or);
     self.patch_jump(end_jump)
   }
 
-  fn get_rule(&self, tt: TokenTypeDiscr) -> Result<&Rule> {
-    RULES.get(&tt).ok_or_else(|| bad!(Internal, "No rule for token {:?}", tt))
-  }
+  fn get_rule(&self, tt: TokenTypeDiscr) -> &Rule { &RULES[&tt] }
 
-  fn previous_rule(&self) -> Result<&Rule> { self.get_rule(self.previous_ttd()) }
-  fn current_rule(&self) -> Result<&Rule> { self.get_rule(self.current_ttd()) }
+  fn previous_rule(&self) -> &Rule { self.get_rule(self.previous_ttd()) }
+  fn current_rule(&self) -> &Rule { self.get_rule(self.current_ttd()) }
   fn previous_ttd(&self) -> TokenTypeDiscr { self.previous.token_type().discr() }
   fn current_ttd(&self) -> TokenTypeDiscr { self.current.token_type().discr() }
 
-  fn emit_value(&mut self, v: Declared) -> Result<()> {
-    let cc = self.add_constant(v)?;
+  fn emit_value(&mut self, v: Declared) {
+    let cc = self.add_constant(v);
     self.emit_instr(Opcode::Constant(cc));
-    Ok(())
   }
 
-  fn emit_closure(&mut self, s: Scope) -> Result<()> {
+  fn emit_closure(&mut self, s: Scope) {
     let Scope { upvals, function, .. } = s;
-    let cc = self.add_constant(function.into())?;
+    let cc = self.add_constant(function.into());
     self.emit_instr(Opcode::Closure(cc, upvals));
-    Ok(())
   }
 
-  fn add_constant(&mut self, v: Declared) -> Result<usize> { self.current_chunk().add_constant(v) }
+  fn add_constant(&mut self, v: Declared) -> usize { self.current_chunk().add_constant(v) }
 
-  fn parse_precendence(&mut self, prec: Precedence) -> Result<()> {
+  fn parse_precendence(&mut self, prec: Precedence) {
     self.advance();
 
-    if let Some(prefix) = self.previous_rule()?.prefix() {
-      prefix(self)?;
+    if let Some(prefix) = self.previous_rule().prefix() {
+      prefix(self);
     } else {
-      bail!(Compile, "Expected expression.");
+      panic!("Expected expression.");
     }
 
-    while prec <= self.current_rule()?.precedence() {
+    while prec <= self.current_rule().precedence() {
       self.advance();
-      (self.previous_rule()?.infix().unwrap())(self)?;
+      (self.previous_rule().infix().unwrap())(self);
     }
-
-    Ok(())
   }
 
   fn top_scope_mut(&mut self) -> &mut Scope { self.scope.last_mut().unwrap() }
@@ -563,15 +546,15 @@ impl Scope {
     self.locals.iter().rev().take_while(|l| l.depth() >= self.scope_depth).any(|l| l.name() == name)
   }
 
-  pub fn resolve_local(&self, name: &str) -> Result<Option<usize>> {
+  pub fn resolve_local(&self, name: &str) -> Option<usize> {
     let i = self.locals().iter().enumerate().rev().find(|(_, l)| l.name() == name).map(|(i, _)| i);
     match i {
-      None => Ok(None),
+      None => None,
       Some(i) => {
         if self.initialized(i) {
-          Ok(Some(i))
+          Some(i)
         } else {
-          err!(Compile, "Can't read local in its own initializer")
+          panic!("Can't read local in its own initializer")
         }
       }
     }
@@ -593,41 +576,41 @@ impl Local {
   pub fn set_captured(&mut self, cap: bool) { self.is_captured = cap }
 }
 
-fn variable(compiler: &mut Compiler) -> Result<()> { compiler.variable() }
-fn binary(compiler: &mut Compiler) -> Result<()> { compiler.binary() }
-fn and(compiler: &mut Compiler) -> Result<()> { compiler.and() }
-fn or(compiler: &mut Compiler) -> Result<()> { compiler.or() }
-fn unary(compiler: &mut Compiler) -> Result<()> { compiler.unary() }
-fn literal(compiler: &mut Compiler) -> Result<()> { compiler.literal() }
-fn grouping(compiler: &mut Compiler) -> Result<()> { compiler.grouping() }
-fn if_block(compiler: &mut Compiler) -> Result<()> { compiler.if_block() }
-fn fn_sync(compiler: &mut Compiler) -> Result<()> { compiler.fn_sync() }
-fn call(compiler: &mut Compiler) -> Result<()> { compiler.call() }
+fn variable(compiler: &mut Compiler) { compiler.variable() }
+fn binary(compiler: &mut Compiler) { compiler.binary() }
+fn and(compiler: &mut Compiler) { compiler.and() }
+fn or(compiler: &mut Compiler) { compiler.or() }
+fn unary(compiler: &mut Compiler) { compiler.unary() }
+fn literal(compiler: &mut Compiler) { compiler.literal() }
+fn grouping(compiler: &mut Compiler) { compiler.grouping() }
+fn if_block(compiler: &mut Compiler) { compiler.if_block() }
+fn fn_sync(compiler: &mut Compiler) { compiler.fn_sync() }
+fn call(compiler: &mut Compiler) { compiler.call() }
 
-fn to_value<V>(v: &str) -> Result<Declared>
+fn to_value<V>(v: &str) -> Declared
 where
   V: Into<Declared> + FromStr,
   Error: From<<V as FromStr>::Err>
 {
-  Ok(v.parse::<V>()?.into())
+  v.parse::<V>().map_err(Error::from).unwrap().into()
 }
 
 struct Rule {
-  prefix: Option<for<'r, 's> fn(&'r mut Compiler<'s>) -> Result<()>>,
-  infix: Option<for<'r, 's> fn(&'r mut Compiler<'s>) -> Result<()>>,
+  prefix: Option<for<'r, 's> fn(&'r mut Compiler<'s>)>,
+  infix: Option<for<'r, 's> fn(&'r mut Compiler<'s>)>,
   precedence: Precedence
 }
 
 impl Rule {
   pub fn new(
-    prefix: Option<for<'r, 's> fn(&'r mut Compiler<'s>) -> Result<()>>,
-    infix: Option<for<'r, 's> fn(&'r mut Compiler<'s>) -> Result<()>>, precedence: Precedence
+    prefix: Option<for<'r, 's> fn(&'r mut Compiler<'s>)>, infix: Option<for<'r, 's> fn(&'r mut Compiler<'s>)>,
+    precedence: Precedence
   ) -> Rule {
     Rule { prefix, infix, precedence }
   }
 
-  pub fn prefix(&self) -> Option<fn(&mut Compiler) -> Result<()>> { self.prefix }
-  pub fn infix(&self) -> Option<fn(&mut Compiler) -> Result<()>> { self.infix }
+  pub fn prefix(&self) -> Option<fn(&mut Compiler)> { self.prefix }
+  pub fn infix(&self) -> Option<fn(&mut Compiler)> { self.infix }
   pub fn precedence(&self) -> Precedence { self.precedence }
 }
 
@@ -655,8 +638,8 @@ enum Precedence {
 }
 
 impl Precedence {
-  pub fn up(&self) -> Result<Precedence> {
-    let up = match self {
+  pub fn up(&self) -> Precedence {
+    match self {
       Self::None => Self::Or,
       Self::Or => Self::And,
       Self::And => Self::Equality,
@@ -666,9 +649,8 @@ impl Precedence {
       Self::Factor => Self::Unary,
       Self::Unary => Self::Call,
       Self::Call => Self::Primary,
-      Self::Primary => bail!(Internal, "No precedence higher than primary.")
-    };
-    Ok(up)
+      Self::Primary => panic!("No precedence higher than primary.")
+    }
   }
 }
 
@@ -703,7 +685,6 @@ fn construct_rules() -> HashMap<TokenTypeDiscr, Rule> {
   rules.insert(TokenTypeDiscr::CloseParen, Rule::new(None, None, Precedence::None));
   rules.insert(TokenTypeDiscr::Dot, Rule::new(None, Some(binary), Precedence::Call));
   rules.insert(TokenTypeDiscr::FnWord, Rule::new(Some(fn_sync), None, Precedence::None));
-  rules.insert(TokenTypeDiscr::FnAsyncWord, Rule::new(None, None, Precedence::None));
   rules.insert(TokenTypeDiscr::IfWord, Rule::new(Some(if_block), None, Precedence::None));
   rules.insert(TokenTypeDiscr::ElseifWord, Rule::new(None, None, Precedence::None));
   rules.insert(TokenTypeDiscr::ElseWord, Rule::new(None, None, Precedence::None));

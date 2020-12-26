@@ -2,19 +2,18 @@
 
 use crate::common::{Chunk, Closure, Instr, Native, ObjUpvalue, ObjUpvalues, Opcode};
 use crate::compiler::compile;
-use crate::value::{Value, Declared};
-use std::collections::HashMap;
-use std::sync::Arc;
 use crate::inline::Inline;
-use std::future::Future;
+use crate::value::{Declared, Value};
+use std::collections::HashMap;
 use std::fmt;
+use std::future::Future;
 use std::pin::Pin;
+use std::sync::Arc;
 
 const FRAMES_MAX: usize = 255;
 
 type CallStack = Vec<CallFrame>;
 type Globals = HashMap<String, Declared>;
-type OpenUpvalues = HashMap<usize, Vec<(Arc<Closure>, usize)>>;
 type Stack = Inline<Value>;
 
 pub struct Vm {
@@ -30,7 +29,7 @@ impl Default for Vm {
 
 impl Vm {
   pub fn new() -> Vm {
-    Vm { call_stack: Vec::new(), stack: Stack::new(), globals: HashMap::new(), open_upvals: HashMap::new() }
+    Vm { call_stack: Vec::new(), stack: Stack::new(), globals: HashMap::new(), open_upvals: OpenUpvalues::new() }
   }
 
   pub fn add_native(&mut self, name: impl ToString, native: Native) {
@@ -42,18 +41,14 @@ impl Vm {
     debug_assert_eq!(self.call_stack.len(), 0);
 
     // last minute code changes
-    let function = compile(source).unwrap();
+    let function = compile(source);
 
     // lock it in
     let function = Arc::new(function);
     let closure = Arc::new(Closure::new(function, Vec::new()));
 
-    let mut ftr = Runner {
-      call_stack: self.call_stack,
-      stack: self.stack,
-      globals: self.globals,
-      open_upvals: self.open_upvals
-    };
+    let mut ftr =
+      Runner { call_stack: self.call_stack, stack: self.stack, globals: self.globals, open_upvals: self.open_upvals };
 
     ftr.run_closure(closure, Vec::new()).await
   }
@@ -82,7 +77,7 @@ impl Runner {
         Stopped::Native(ntv) => {
           let v = ntv.run(self).await;
           self.stack.push(v);
-        },
+        }
         Stopped::Done(v) => return v
       }
     }
@@ -90,6 +85,9 @@ impl Runner {
 
   fn run(&mut self) -> Stopped {
     self.try_run()
+
+    // TODO: inject error handling everywhere
+    //
     // if r.is_err() {
     //   self.debug_stack_trace();
     // }
@@ -131,7 +129,7 @@ impl Runner {
             Handled::None => ()
           }
         } else {
-          break 'outer
+          break 'outer;
         }
       }
     }
@@ -169,7 +167,7 @@ fn handle_op(
   slots: &usize, stack: &mut Stack, ip: &mut usize
 ) -> Handled {
   match instr.op() {
-    Opcode::Lt => binary_fast(stack, |v, w| v.try_lt(w)),
+    Opcode::Lt => binary_fast(stack, |v, w| v.op_lt(w)),
     Opcode::GetLocal(l) => {
       let v = stack.get_mut(*l + *slots).shift();
       stack.push(v);
@@ -178,27 +176,27 @@ fn handle_op(
       let lit = chunk.get_constant(*c).unwrap().to_value();
       stack.push(lit);
     }
-    Opcode::Not => unary(stack, |v| v.try_not()),
-    Opcode::Negate => unary(stack, |v| v.try_negate()),
-    Opcode::Add => binary_fast(stack, |v, w| v.try_add(w)),
-    Opcode::Subtract => binary_fast(stack, |v, w| v.try_subtract(w)),
-    Opcode::Multiply => binary_fast(stack, |v, w| v.try_multiply(w)),
-    Opcode::Divide => binary_fast(stack, |v, w| v.try_divide(w)),
-    Opcode::Mod => binary_fast(stack, |v, w| v.try_mod(w)),
-    Opcode::And => binary_fast(stack, |v, w| v.try_and(w)),
-    Opcode::Or => binary_fast(stack, |v, w| v.try_or(w)),
-    Opcode::Gt => binary_fast(stack, |v, w| v.try_gt(w)),
-    Opcode::Gte => binary_fast(stack, |v, w| v.try_gte(w)),
-    Opcode::Lte => binary_fast(stack, |v, w| v.try_lte(w)),
-    Opcode::Equals => binary_fast(stack, |v, w| v.try_eq(w)),
-    Opcode::NotEquals => binary_fast(stack, |v, w| v.try_neq(w)),
+    Opcode::Not => unary(stack, |v| v.op_not()),
+    Opcode::Negate => unary(stack, |v| v.op_negate()),
+    Opcode::Add => binary_fast(stack, |v, w| v.op_add(w)),
+    Opcode::Subtract => binary_fast(stack, |v, w| v.op_subtract(w)),
+    Opcode::Multiply => binary_fast(stack, |v, w| v.op_multiply(w)),
+    Opcode::Divide => binary_fast(stack, |v, w| v.op_divide(w)),
+    Opcode::Mod => binary_fast(stack, |v, w| v.op_mod(w)),
+    Opcode::And => binary_fast(stack, |v, w| v.op_and(w)),
+    Opcode::Or => binary_fast(stack, |v, w| v.op_or(w)),
+    Opcode::Gt => binary_fast(stack, |v, w| v.op_gt(w)),
+    Opcode::Gte => binary_fast(stack, |v, w| v.op_gte(w)),
+    Opcode::Lte => binary_fast(stack, |v, w| v.op_lte(w)),
+    Opcode::Equals => binary_fast(stack, |v, w| v.op_eq(w)),
+    Opcode::NotEquals => binary_fast(stack, |v, w| v.op_neq(w)),
     Opcode::GetGlobal(l) => {
       let name = chunk.get_constant(*l).unwrap().as_str().unwrap();
       stack.push(globals.get(name).unwrap().to_value());
     }
     Opcode::Jump(offset) => *ip += *offset as usize,
     Opcode::JumpIfFalse(offset) => {
-      if !stack.last().try_bool() {
+      if !stack.last().as_bool() {
         *ip += *offset as usize
       }
     }
@@ -211,16 +209,7 @@ fn handle_op(
     }
     Opcode::Call(argc) => return call_value(stack, *argc),
     Opcode::Return => {
-      let mut index = stack.len() - 1;
-      while index > *slots {
-        // FAST
-        // if let Some(list) = open_upvals.get(&index) {
-        //   close_upvalues(list, &stack[index])?;
-        //   open_upvals.remove(&index);
-        // }
-        index -= 1;
-      }
-
+      open_upvals.close_gte(*slots, stack);
       stack.swap_remove(*slots);
       stack.truncate(slots + 1);
       return Handled::StackOp(StackOp::Pop);
@@ -233,29 +222,51 @@ fn handle_op(
       let val = chunk.get_constant(*c).unwrap();
       let new_upvalues: Vec<_> = upvals
         .iter()
-        .map(
-          |v| if v.is_local() { capture_upvalue(*slots + v.index()) } else { upvalues[v.index()].try_clone().unwrap() }
-        )
+        .map(|v| if v.is_local() { capture_upvalue(*slots + v.index()) } else { upvalues[v.index()].clone() })
         .collect();
 
-      let uv_inds: Vec<_> = new_upvalues.iter().map(|v| v.location().unwrap()).collect();
-      let closure = Arc::new(Closure::new(val.try_function().unwrap(), new_upvalues));
-      for (ci, uvi) in uv_inds.into_iter().enumerate() {
-        open_upvals.entry(uvi).or_insert(Vec::new()).push((closure.clone(), ci));
-      }
+      let uv_inds: Vec<_> = new_upvalues.iter().map(|v| v.location()).collect();
+      let closure = Arc::new(Closure::new(val.as_function(), new_upvalues));
+      open_upvals.insert_opens(uv_inds, &closure);
       stack.push(closure.into());
     }
     Opcode::CloseUpvalue => {
-      let mut val = stack.pop();
-      let index = stack.len();
-      if let Some(list) = open_upvals.get(&index) {
-        close_upvalues(list, &mut val);
-        open_upvals.remove(&index);
-      }
+      let index = stack.len() - 1;
+      open_upvals.close_gte(index, stack);
+      stack.drop();
     }
   }
 
   Handled::None
+}
+
+struct OpenUpvalues {
+  #[allow(clippy::type_complexity)]
+  per_slot: Vec<(usize, Vec<(Arc<Closure>, usize)>)>
+}
+
+impl OpenUpvalues {
+  pub fn new() -> OpenUpvalues { OpenUpvalues { per_slot: Vec::new() } }
+
+  pub fn insert_opens(&mut self, uv_inds: Vec<usize>, closure: &Arc<Closure>) {
+    for (ci, uvi) in uv_inds.into_iter().enumerate() {
+      let ind = self.per_slot.iter().rposition(|(s, _)| s < &uvi).map(|p| p + 1).unwrap_or(0);
+
+      if ind == self.per_slot.len() || self.per_slot[ind].0 > uvi {
+        self.per_slot.insert(ind, (uvi, vec![(closure.clone(), ci)]));
+      } else if self.per_slot[ind].0 == uvi {
+        self.per_slot[ind].1.push((closure.clone(), ci));
+      }
+    }
+  }
+
+  pub fn close_gte(&mut self, target: usize, stack: &mut Stack) {
+    let per_slot = &mut self.per_slot;
+    while !per_slot.is_empty() && per_slot.last().unwrap().0 >= target {
+      let (slot, locs) = per_slot.pop().unwrap();
+      close_upvalues(&locs, &mut stack[slot]);
+    }
+  }
 }
 
 fn capture_upvalue(i: usize) -> ObjUpvalue { ObjUpvalue::new(i) }
@@ -279,7 +290,7 @@ impl fmt::Debug for Stopped {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
       Self::Native(_) => write!(f, "(native)"),
-      Self::Done(v) => write!(f, "{:?}", v),
+      Self::Done(v) => write!(f, "{:?}", v)
     }
   }
 }

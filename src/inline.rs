@@ -19,9 +19,7 @@ pub struct Inline<T> {
 }
 
 impl<T> Inline<T> {
-  pub fn new() -> Inline<T> {
-    Inline { inline: MaybeUninit::uninit(), len: 0 }
-  }
+  pub fn new() -> Inline<T> { Inline { inline: MaybeUninit::uninit(), len: 0 } }
 
   #[inline]
   pub fn len(&self) -> usize { self.len }

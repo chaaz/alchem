@@ -9,7 +9,7 @@ pub mod errors;
 #[macro_use]
 pub(crate) mod common;
 pub(crate) mod compiler;
-pub(crate) mod scanner;
 pub(crate) mod inline;
+pub(crate) mod scanner;
 pub mod value;
 pub mod vm;

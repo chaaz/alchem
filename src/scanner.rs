@@ -73,8 +73,6 @@ impl<'s> Scanner<'s> {
 
     match &self.input[open .. close] {
       "fn" => TokenType::FnWord,
-      "fn<>" => TokenType::FnAsyncWord,
-      "fn<" => TokenType::Error(format!("Incomplete keyword \"fn<\" at {}.", open)),
       "if" => TokenType::IfWord,
       "elseif" => TokenType::ElseifWord,
       "else" => TokenType::ElseWord,
@@ -206,7 +204,6 @@ pub enum TokenType<'s> {
   CloseParen,
   Dot,
   FnWord,
-  FnAsyncWord,
   IfWord,
   ElseifWord,
   ElseWord,
@@ -251,7 +248,6 @@ impl<'s> TokenType<'s> {
       Self::CloseParen => TokenTypeDiscr::CloseParen,
       Self::Dot => TokenTypeDiscr::Dot,
       Self::FnWord => TokenTypeDiscr::FnWord,
-      Self::FnAsyncWord => TokenTypeDiscr::FnAsyncWord,
       Self::IfWord => TokenTypeDiscr::IfWord,
       Self::ElseifWord => TokenTypeDiscr::ElseifWord,
       Self::ElseWord => TokenTypeDiscr::ElseWord,
@@ -296,7 +292,6 @@ pub enum TokenTypeDiscr {
   CloseParen,
   Dot,
   FnWord,
-  FnAsyncWord,
   IfWord,
   ElseifWord,
   ElseWord,

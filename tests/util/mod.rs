@@ -2,7 +2,7 @@
 
 use alchem::native_fn;
 use alchem::value::Value;
-use alchem::vm::{Vm, Runner};
+use alchem::vm::{Runner, Vm};
 use macro_rules_attribute::macro_rules_attribute;
 use std::convert::TryInto;
 

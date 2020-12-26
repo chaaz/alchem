@@ -3,7 +3,7 @@
 use alchem::errors::Result;
 use alchem::native_fn;
 use alchem::value::Value;
-use alchem::vm::{Vm, Runner};
+use alchem::vm::{Runner, Vm};
 use clap::{crate_version, App, AppSettings, Arg, ArgMatches};
 use macro_rules_attribute::macro_rules_attribute;
 // use std::io::{self, BufRead};
@@ -33,7 +33,6 @@ async fn parse_matches(m: ArgMatches<'_>) -> Result<()> {
   match m.value_of("input") {
     Some(input) => run_file(input).await,
     None => run_file("fib.alc").await
-    // None => repl().await
   }
 }
 
@@ -65,7 +64,7 @@ async fn recall(vals: Vec<Value>, runner: &mut Runner) -> Value {
 // async fn repl() -> Result<()> {
 //   let mut vm = Vm::new();
 //   vm.add_native("print", print);
-// 
+//
 //   let stdin = io::stdin();
 //   for line in stdin.lock().lines() {
 //     let line = line?;

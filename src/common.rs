@@ -1,12 +1,11 @@
 //! Common info for the parser.
 
-use super::errors::Result;
-use super::value::{Value, Declared};
-use std::fmt;
-use std::sync::{Arc, Mutex};
+use super::value::{Declared, Value};
 use super::vm::Runner;
-use std::pin::Pin;
+use std::fmt;
 use std::future::Future;
+use std::pin::Pin;
+use std::sync::{Arc, Mutex};
 
 const MAX_CONSTANTS: usize = 255;
 
@@ -126,10 +125,10 @@ impl fmt::Debug for ObjUpvalue {
 impl ObjUpvalue {
   pub fn new(location: usize) -> ObjUpvalue { ObjUpvalue::Open(location) }
 
-  pub fn location(&self) -> Result<usize> {
+  pub fn location(&self) -> usize {
     match self {
-      Self::Open(loc) => Ok(*loc),
-      _ => err!(Internal, "No location in closed upvalue")
+      Self::Open(loc) => *loc,
+      _ => panic!("No location in closed upvalue")
     }
   }
 
@@ -148,11 +147,13 @@ impl ObjUpvalue {
       _ => panic!("ObjUpvalue already flipped.")
     }
   }
+}
 
-  pub fn try_clone(&self) -> Result<ObjUpvalue> {
+impl Clone for ObjUpvalue {
+  fn clone(&self) -> ObjUpvalue {
     match self {
-      Self::Open(loc) => Ok(Self::Open(*loc)),
-      _ => err!(Internal, "Can't clone closed upvalue")
+      Self::Open(loc) => Self::Open(*loc),
+      _ => panic!("Can't clone closed upvalue")
     }
   }
 }
@@ -187,23 +188,21 @@ impl Chunk {
   #[inline]
   pub fn at_fast(&self, ind: usize) -> &Instr { &self.code[ind] }
 
-  pub fn add_value_anon(&mut self, v: Declared) -> Result<()> {
-    let cc = self.add_constant(v)?;
+  pub fn add_value_anon(&mut self, v: Declared) {
+    let cc = self.add_constant(v);
     self.add_code_anon(Opcode::Constant(cc));
-    Ok(())
   }
 
-  pub fn patch_jump(&mut self, ind: usize, val: u16) -> Result<()> {
+  pub fn patch_jump(&mut self, ind: usize, val: u16) {
     match self.code.get_mut(ind).map(|instr| instr.op_mut()) {
       Some(Opcode::Jump(v)) | Some(Opcode::JumpIfFalse(v)) => {
         *v = val;
-        Ok(())
       }
-      other => err!(Compile, "Illegal jump address: {:?}", other)
+      other => panic!("Illegal jump address: {:?}", other)
     }
   }
 
-  pub fn add_constant(&mut self, cnst: Declared) -> Result<usize> { self.constants.add(cnst) }
+  pub fn add_constant(&mut self, cnst: Declared) -> usize { self.constants.add(cnst) }
   pub fn constants_len(&self) -> usize { self.constants.len() }
   pub fn constants_is_empty(&self) -> bool { self.constants.is_empty() }
   pub fn get_constant(&self, ind: usize) -> Option<&Declared> { self.constants.get(ind) }
@@ -235,12 +234,12 @@ impl ValueArray {
   pub fn get(&self, ind: usize) -> Option<&Declared> { self.values.get(ind) }
   pub fn iter(&self) -> impl Iterator<Item = &Declared> { self.values.iter() }
 
-  pub fn add(&mut self, v: Declared) -> Result<usize> {
+  pub fn add(&mut self, v: Declared) -> usize {
     self.values.push(v);
     if self.len() > MAX_CONSTANTS {
-      bail!(Compile, "Too many constants in one chunk: {}", self.len());
+      panic!("Too many constants in one chunk: {}", self.len());
     }
-    Ok(self.len() - 1)
+    self.len() - 1
   }
 }
 
@@ -294,7 +293,6 @@ impl Opcode {
   pub fn initial_jump() -> Opcode { Self::Jump(0) }
 }
 
-
 // convert
 //
 // async fn print(vals: Vec<Value>, runner: &mut Runner) -> Value
@@ -338,7 +336,7 @@ mod test {
   #[test]
   fn const_int() {
     let mut chunk = Chunk::new();
-    assert_eq!(chunk.add_constant(Declared::Float(1.2)).unwrap(), 0);
+    assert_eq!(chunk.add_constant(Declared::Float(1.2)), 0);
     assert_eq!(chunk.add_code_anon(Opcode::Constant(0)), 0);
     assert_eq!(chunk.code_len(), 1);
     assert_eq!(chunk.constants_len(), 1);
@@ -347,7 +345,7 @@ mod test {
   #[test]
   fn value_array() {
     let mut va = ValueArray::new();
-    assert_eq!(va.add(Declared::Float(3.0)).unwrap(), 0);
+    assert_eq!(va.add(Declared::Float(3.0)), 0);
     assert_eq!(va.values.len(), 1);
   }
 }

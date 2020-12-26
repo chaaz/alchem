@@ -1,7 +1,6 @@
 //! The values representable in our language.
 
 use crate::common::{Closure, Function, Native};
-use crate::errors::Result;
 use std::cmp::PartialEq;
 use std::fmt;
 use std::sync::Arc;
@@ -83,7 +82,7 @@ impl Value {
     }
   }
 
-  pub fn try_bool(&self) -> bool {
+  pub fn as_bool(&self) -> bool {
     match self {
       Self::Bool(v) => *v,
       _ => panic!("Not a boolean: {:?}", self)
@@ -111,7 +110,7 @@ impl Value {
     }
   }
 
-  pub fn try_negate(&self) -> Value {
+  pub fn op_negate(&self) -> Value {
     match self {
       Self::Float(v) => Self::Float(-*v),
       Self::Int(v) => Self::Int(-*v),
@@ -119,14 +118,14 @@ impl Value {
     }
   }
 
-  pub fn try_not(&self) -> Value {
+  pub fn op_not(&self) -> Value {
     match self {
       Self::Bool(v) => Self::Bool(!*v),
       _ => panic!("No negation for {:?}", self)
     }
   }
 
-  pub fn try_add(&self, other: &Value) -> Value {
+  pub fn op_add(&self, other: &Value) -> Value {
     match (self, other) {
       (Self::Float(v1), Value::Float(v2)) => Self::Float(v1 + v2),
       (Self::Int(v1), Value::Int(v2)) => Self::Int(v1 + v2),
@@ -139,7 +138,7 @@ impl Value {
     }
   }
 
-  pub fn try_subtract(&self, other: &Value) -> Value {
+  pub fn op_subtract(&self, other: &Value) -> Value {
     match (self, other) {
       (Self::Float(v1), Value::Float(v2)) => Self::Float(v1 - v2),
       (Self::Int(v1), Value::Int(v2)) => Self::Int(v1 - v2),
@@ -147,7 +146,7 @@ impl Value {
     }
   }
 
-  pub fn try_multiply(&self, other: &Value) -> Value {
+  pub fn op_multiply(&self, other: &Value) -> Value {
     match (self, other) {
       (Self::Float(v1), Value::Float(v2)) => Self::Float(v1 * v2),
       (Self::Int(v1), Value::Int(v2)) => Self::Int(v1 * v2),
@@ -155,7 +154,7 @@ impl Value {
     }
   }
 
-  pub fn try_divide(&self, other: &Value) -> Value {
+  pub fn op_divide(&self, other: &Value) -> Value {
     match (self, other) {
       (Self::Float(v1), Value::Float(v2)) => Self::Float(v1 / v2),
       (Self::Int(v1), Value::Int(v2)) => Self::Int(v1 / v2),
@@ -163,7 +162,7 @@ impl Value {
     }
   }
 
-  pub fn try_mod(&self, other: &Value) -> Value {
+  pub fn op_mod(&self, other: &Value) -> Value {
     match (self, other) {
       (Self::Float(v1), Value::Float(v2)) => Self::Float(v1 % v2),
       (Self::Int(v1), Value::Int(v2)) => Self::Int(v1 % v2),
@@ -171,7 +170,7 @@ impl Value {
     }
   }
 
-  pub fn try_gt(&self, other: &Value) -> Value {
+  pub fn op_gt(&self, other: &Value) -> Value {
     match (self, other) {
       (Self::Float(v1), Value::Float(v2)) => Self::Bool(v1 > v2),
       (Self::Int(v1), Value::Int(v2)) => Self::Bool(v1 > v2),
@@ -179,7 +178,7 @@ impl Value {
     }
   }
 
-  pub fn try_gte(&self, other: &Value) -> Value {
+  pub fn op_gte(&self, other: &Value) -> Value {
     match (self, other) {
       (Self::Float(v1), Value::Float(v2)) => Self::Bool(v1 >= v2),
       (Self::Int(v1), Value::Int(v2)) => Self::Bool(v1 >= v2),
@@ -187,7 +186,7 @@ impl Value {
     }
   }
 
-  pub fn try_lt(&self, other: &Value) -> Value {
+  pub fn op_lt(&self, other: &Value) -> Value {
     match (self, other) {
       (Self::Float(v1), Value::Float(v2)) => Self::Bool(v1 < v2),
       (Self::Int(v1), Value::Int(v2)) => Self::Bool(v1 < v2),
@@ -195,7 +194,7 @@ impl Value {
     }
   }
 
-  pub fn try_lte(&self, other: &Value) -> Value {
+  pub fn op_lte(&self, other: &Value) -> Value {
     match (self, other) {
       (Self::Float(v1), Value::Float(v2)) => Self::Bool(v1 <= v2),
       (Self::Int(v1), Value::Int(v2)) => Self::Bool(v1 <= v2),
@@ -203,7 +202,7 @@ impl Value {
     }
   }
 
-  pub fn try_eq(&self, other: &Value) -> Value {
+  pub fn op_eq(&self, other: &Value) -> Value {
     match (self, other) {
       (Self::Float(v1), Value::Float(v2)) => Self::Bool((v1 - v2).abs() < f64::EPSILON),
       (Self::Int(v1), Value::Int(v2)) => Self::Bool(v1 == v2),
@@ -213,7 +212,7 @@ impl Value {
     }
   }
 
-  pub fn try_neq(&self, other: &Value) -> Value {
+  pub fn op_neq(&self, other: &Value) -> Value {
     match (self, other) {
       (Self::Float(v1), Value::Float(v2)) => Self::Bool((v1 - v2).abs() >= f64::EPSILON),
       (Self::Int(v1), Value::Int(v2)) => Self::Bool(v1 != v2),
@@ -223,14 +222,14 @@ impl Value {
     }
   }
 
-  pub fn try_and(&self, other: &Value) -> Value {
+  pub fn op_and(&self, other: &Value) -> Value {
     match (self, other) {
       (Self::Bool(v1), Value::Bool(v2)) => Self::Bool(*v1 && *v2),
       (o1, o2) => panic!("Can't compare types: {:?}, {:?}", o1, o2)
     }
   }
 
-  pub fn try_or(&self, other: &Value) -> Value {
+  pub fn op_or(&self, other: &Value) -> Value {
     match (self, other) {
       (Self::Bool(v1), Value::Bool(v2)) => Self::Bool(*v1 || *v2),
       (o1, o2) => panic!("Can't compare types: {:?}, {:?}", o1, o2)
@@ -323,10 +322,10 @@ impl Declared {
     }
   }
 
-  pub fn try_function(&self) -> Result<Arc<Function>> {
+  pub fn as_function(&self) -> Arc<Function> {
     match self {
-      Self::Function(v) => Ok(v.clone()),
-      _ => err!(Compile, "Not a function: {:?}", self)
+      Self::Function(v) => v.clone(),
+      _ => panic!("Not a function: {:?}", self)
     }
   }
 
