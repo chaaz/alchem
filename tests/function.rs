@@ -23,3 +23,6 @@ async fn parameters() { expect_script("f=fn(a){=a};=f(1)", 1.into()).await; }
 
 #[tokio::test]
 async fn nested_parameters() { expect_script("f=fn(){=fn(a){=a}};fx=f();=fx(1)", 1.into()).await; }
+
+#[tokio::test]
+async fn return_op() { expect_script("f=fn(){=1};=f()+1", 2.into()).await; }

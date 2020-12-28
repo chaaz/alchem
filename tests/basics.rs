@@ -18,6 +18,9 @@ async fn simple_string() { expect_script(r#"="hello""#, "hello".into()).await; }
 async fn expr_math() { expect_script("= 1 + 1", 2.into()).await; }
 
 #[tokio::test]
+async fn expr_subt() { expect_script("= 2 - 1", 1.into()).await; }
+
+#[tokio::test]
 async fn expr_math_prec() { expect_script("= 1 + 1 * 2", 3.into()).await; }
 
 #[tokio::test]
