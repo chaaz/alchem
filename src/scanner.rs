@@ -1,6 +1,7 @@
 //! The scanner for the alchem language.
 
 use std::str::CharIndices;
+use std::vec::IntoIter;
 
 pub struct Scanner<'s> {
   input: &'s str,
@@ -14,9 +15,9 @@ impl<'s> Scanner<'s> {
 }
 
 impl<'s> Iterator for Scanner<'s> {
-  type Item = Token<'s>;
+  type Item = Token;
 
-  fn next(&mut self) -> Option<Token<'s>> {
+  fn next(&mut self) -> Option<Token> {
     self.skip_whitespace();
     self.iter.next().map(|(st, c)| {
       let token_type = match c {
@@ -53,17 +54,13 @@ impl<'s> Iterator for Scanner<'s> {
 }
 
 impl<'s> Scanner<'s> {
-  fn next_identifier(&mut self, open: usize) -> TokenType<'s> {
+  pub fn drain_into_iter(&mut self) -> IntoIter<Token> { self.collect::<Vec<_>>().into_iter() }
+
+  fn next_identifier(&mut self, open: usize) -> TokenType {
     let mut close = open + 1;
     while let Some((i, c)) = self.peek() {
       close = i;
-      if &self.input[open .. close] != "fn<>"
-        && (c.is_ascii_alphabetic()
-          || c.is_digit(10)
-          || c == '_'
-          || (&self.input[open .. close] == "fn" && c == '<')
-          || (&self.input[open .. close] == "fn<" && c == '>'))
-      {
+      if c.is_ascii_alphabetic() || c.is_digit(10) || c == '_' {
         close += 1;
         self.iter.next();
       } else {
@@ -78,11 +75,11 @@ impl<'s> Scanner<'s> {
       "else" => TokenType::ElseWord,
       "false" => TokenType::FalseLit,
       "true" => TokenType::TrueLit,
-      id => TokenType::Identifier(id)
+      id => TokenType::Identifier(id.to_string())
     }
   }
 
-  fn next_number(&mut self, open: usize) -> TokenType<'s> {
+  fn next_number(&mut self, open: usize) -> TokenType {
     let mut is_int = true;
     let mut has_trail = false;
     let mut close = open + 1;
@@ -106,18 +103,18 @@ impl<'s> Scanner<'s> {
     }
 
     if is_int {
-      TokenType::IntLit(&self.input[open .. close])
+      TokenType::IntLit(self.input[open .. close].to_string())
     } else if has_trail {
-      TokenType::FloatLit(&self.input[open .. close])
+      TokenType::FloatLit(self.input[open .. close].to_string())
     } else {
       TokenType::Error(format!("Bad number starting at {}.", open))
     }
   }
 
-  fn next_string(&mut self, open: usize) -> TokenType<'s> {
+  fn next_string(&mut self, open: usize) -> TokenType {
     while let Some((i, c)) = self.iter.next() {
       if c == '"' {
-        return TokenType::StringLit(&self.input[open + 1 .. i]);
+        return TokenType::StringLit(self.input[open + 1 .. i].to_string());
       } else if c == '\n' {
         self.line += 1;
       }
@@ -149,7 +146,7 @@ impl<'s> Scanner<'s> {
     }
   }
 
-  fn if_next(&mut self, t: char, if_t: TokenType<'s>, if_f: TokenType<'s>) -> TokenType<'s> {
+  fn if_next(&mut self, t: char, if_t: TokenType, if_f: TokenType) -> TokenType {
     match self.peek() {
       Some((_, x)) if x == t => {
         self.iter.next();
@@ -160,14 +157,14 @@ impl<'s> Scanner<'s> {
   }
 }
 
-#[derive(Debug)]
-pub struct Token<'s> {
+#[derive(Debug, Clone)]
+pub struct Token {
   line: usize,
-  token_type: TokenType<'s>
+  token_type: TokenType
 }
 
-impl<'s> Token<'s> {
-  pub fn new(token_type: TokenType<'s>, line: usize) -> Token<'s> { Token { token_type, line } }
+impl Token {
+  pub fn new(token_type: TokenType, line: usize) -> Token { Token { token_type, line } }
 
   pub fn is_error(&self) -> bool { self.token_type.is_error() }
   pub fn line(&self) -> usize { self.line }
@@ -175,7 +172,7 @@ impl<'s> Token<'s> {
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub enum TokenType<'s> {
+pub enum TokenType {
   Bof,
   Eof,
   Comma,
@@ -209,14 +206,14 @@ pub enum TokenType<'s> {
   ElseWord,
   TrueLit,
   FalseLit,
-  IntLit(&'s str),
-  FloatLit(&'s str),
-  StringLit(&'s str),
-  Identifier(&'s str),
+  IntLit(String),
+  FloatLit(String),
+  StringLit(String),
+  Identifier(String),
   Error(String)
 }
 
-impl<'s> TokenType<'s> {
+impl TokenType {
   pub fn is_error(&self) -> bool { matches!(self, TokenType::Error(_)) }
   pub fn discr(&self) -> TokenTypeDiscr {
     match self {

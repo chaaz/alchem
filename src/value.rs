@@ -1,6 +1,7 @@
 //! The values representable in our language.
 
-use crate::common::{Closure, Function, Native};
+use crate::common::{Closure, Function};
+use crate::collapsed::FuncNative;
 use std::cmp::PartialEq;
 use std::fmt;
 use std::sync::Arc;
@@ -11,7 +12,7 @@ pub enum Value {
   Bool(bool),
   String(Arc<str>),
   Closure(Arc<Closure>),
-  Native(Native),
+  Native(Arc<FuncNative>),
   Void
 }
 
@@ -23,7 +24,7 @@ impl PartialEq for Value {
       (Self::Bool(v1), Self::Bool(v2)) => v1 == v2,
       (Self::String(v1), Self::String(v2)) => v1 == v2,
       (Self::Closure(v1), Self::Closure(v2)) => Arc::ptr_eq(v1, v2),
-      (Self::Native(v1), Self::Native(v2)) => v1 as *const Native == v2 as *const Native,
+      (Self::Native(v1), Self::Native(v2)) => Arc::ptr_eq(v1, v2),
       (Self::Void, Self::Void) => true,
       _ => false
     }
@@ -38,7 +39,7 @@ impl fmt::Debug for Value {
       Self::Bool(v) => write!(f, "{}", v),
       Self::String(v) => write!(f, "\"{}\"", v),
       Self::Closure(v) => write!(f, "{:?}", v),
-      Self::Native(_) => write!(f, "(native)"),
+      Self::Native(v) => write!(f, "{:?}", v),
       Self::Void => write!(f, "(void)")
     }
   }
@@ -105,7 +106,7 @@ impl Value {
       Self::Bool(v) => Self::Bool(*v),
       Self::String(v) => Self::String(v.clone()),
       Self::Closure(v) => Self::Closure(v.clone()),
-      Self::Native(v) => Self::Native(*v),
+      Self::Native(v) => Self::Native(v.clone()),
       Self::Void => panic!("Cannot access an evaculated value.")
     }
   }
@@ -242,35 +243,7 @@ pub enum Declared {
   Int(i32),
   Bool(bool),
   String(Arc<str>),
-  Function(Arc<Function>),
-  Native(Native)
-}
-
-impl PartialEq for Declared {
-  fn eq(&self, other: &Declared) -> bool {
-    match (self, other) {
-      (Self::Float(v1), Self::Float(v2)) => v1 == v2,
-      (Self::Int(v1), Self::Int(v2)) => v1 == v2,
-      (Self::Bool(v1), Self::Bool(v2)) => v1 == v2,
-      (Self::String(v1), Self::String(v2)) => v1 == v2,
-      (Self::Function(v1), Self::Function(v2)) => Arc::ptr_eq(v1, v2),
-      (Self::Native(v1), Self::Native(v2)) => v1 as *const Native == v2 as *const Native,
-      _ => false
-    }
-  }
-}
-
-impl Clone for Declared {
-  fn clone(&self) -> Declared {
-    match self {
-      Self::Float(v) => Self::Float(*v),
-      Self::Int(v) => Self::Int(*v),
-      Self::Bool(v) => Self::Bool(*v),
-      Self::String(v) => Self::String(v.clone()),
-      Self::Function(v) => Self::Function(v.clone()),
-      Self::Native(v) => Self::Native(*v)
-    }
-  }
+  Function(Arc<Function>)
 }
 
 impl fmt::Debug for Declared {
@@ -281,7 +254,6 @@ impl fmt::Debug for Declared {
       Self::Bool(v) => write!(f, "{}", v),
       Self::String(v) => write!(f, "\"{}\"", v),
       Self::Function(v) => write!(f, "{:?}", v),
-      Self::Native(_) => write!(f, "(native)")
     }
   }
 }
@@ -322,23 +294,26 @@ impl Declared {
     }
   }
 
-  pub fn as_function(&self) -> Arc<Function> {
-    match self {
-      Self::Function(v) => v.clone(),
-      _ => panic!("Not a function: {:?}", self)
-    }
-  }
+  // pub fn as_function(&self) -> Arc<Function> {
+  //   match self {
+  //     Self::Function(v) => v.clone(),
+  //     _ => panic!("Not a function: {:?}", self)
+  //   }
+  // }
 
-  pub fn to_value(&self) -> Value {
-    match self {
-      Self::Float(v) => Value::Float(*v),
-      Self::Int(v) => Value::Int(*v),
-      Self::Bool(v) => Value::Bool(*v),
-      Self::String(v) => Value::String(v.clone()),
-      Self::Function(_) => panic!("Can't create a function value."),
-      Self::Native(v) => Value::Native(*v)
-    }
-  }
+  // pub fn to_value(&self) -> Value {
+  //   match self {
+  //     Self::Float(v) => Value::Float(*v),
+  //     Self::Int(v) => Value::Int(*v),
+  //     Self::Bool(v) => Value::Bool(*v),
+  //     Self::String(v) => Value::String(v.clone()),
+  //     Self::Function(_) => {
+  //       // You have to use `as_function`, and then generate a closure out of it: see handling of Opcode::closure
+  //       // in `src/vm.rs`
+  //       panic!("Can't create a function value.")
+  //     }
+  //   }
+  // }
 }
 
 #[cfg(test)]

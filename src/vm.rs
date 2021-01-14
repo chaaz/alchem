@@ -1,9 +1,10 @@
 //! The actual VM for parsing the bytecode.
 
-use crate::common::{Chunk, Closure, Instr, Native, ObjUpvalue, ObjUpvalues, Opcode};
-use crate::compiler::compile;
+use crate::collapsed::{Chunk, FuncNative, Declared};
+use crate::common::{Closure, Instr, Native, ObjUpvalue, ObjUpvalues, Opcode, NativeInfo};
+use crate::compiler::{compile, build_function_with_0args_from_scope0};
 use crate::inline::Inline;
-use crate::value::{Declared, Value};
+use crate::value::Value;
 use std::collections::HashMap;
 use std::fmt;
 use std::future::Future;
@@ -32,16 +33,17 @@ impl Vm {
     Vm { call_stack: Vec::new(), stack: Stack::new(), globals: HashMap::new(), open_upvals: OpenUpvalues::new() }
   }
 
-  pub fn add_native(&mut self, name: impl ToString, native: Native) {
-    self.globals.insert(name.to_string(), Declared::Native(native));
-  }
+  // TODO(later):
+  // pub fn add_native(&mut self, name: impl ToString, arity: u8, native: Native, typen: TypeNative) {
+  // }
 
   pub async fn interpret(self, source: &str) -> Value {
     debug_assert_eq!(self.stack.len(), 0);
     debug_assert_eq!(self.call_stack.len(), 0);
 
     // last minute code changes
-    let function = compile(source);
+    let (script, stype) = compile(source);
+    let (function, inst_ind) = build_function_with_0args_from_scope0(script, stype);
 
     // lock it in
     let function = Arc::new(function);
@@ -50,7 +52,7 @@ impl Vm {
     let mut ftr =
       Runner { call_stack: self.call_stack, stack: self.stack, globals: self.globals, open_upvals: self.open_upvals };
 
-    ftr.run_closure(closure, Vec::new()).await
+    ftr.run_closure(closure, inst_ind, Vec::new()).await
   }
 }
 
@@ -62,12 +64,15 @@ pub struct Runner {
 }
 
 impl Runner {
-  pub async fn run_closure(&mut self, closure: Arc<Closure>, args: Vec<Value>) -> Value {
+  pub async fn run_closure(&mut self, closure: Arc<Closure>, inst_ind: usize, args: Vec<Value>) -> Value {
+    // TODO(later): also handle native, via either a separate "run_native", or a "run_value" with switch.
+
     self.stack.push(closure.clone().into());
     debug_assert!(args.len() < 255);
     let args_len = args.len() as u8;
     self.stack.append_vec(args);
-    call_closure(closure, args_len, self.stack.len(), true).perform(&mut self.call_stack);
+
+    call_closure(closure, inst_ind, args_len, &mut self.stack, true).perform(&mut self.call_stack);
     self.run_loop().await
   }
 
@@ -86,7 +91,7 @@ impl Runner {
   fn run(&mut self) -> Stopped {
     self.try_run()
 
-    // TODO: inject error handling everywhere
+    // TODO(later): inject error handling everywhere
     //
     // if r.is_err() {
     //   self.debug_stack_trace();
@@ -152,12 +157,13 @@ impl Runner {
 
 pub struct NativeRun {
   native: Native,
-  args: Vec<Value>
+  args: Vec<Value>,
+  native_info: NativeInfo
 }
 
 impl NativeRun {
   pub fn run<'r>(self, runner: &'r mut Runner) -> Pin<Box<dyn Future<Output = Value> + Send + 'r>> {
-    (self.native)(self.args, runner)
+    (self.native)(self.args, &self.native_info, runner)
   }
 }
 
@@ -167,7 +173,7 @@ fn handle_op(
   slots: &usize, stack: &mut Stack, ip: &mut usize
 ) -> Handled {
   match instr.op() {
-    Opcode::Lt => binary_fast(stack, |v, w| v.op_lt(w)),
+    Opcode::Lt => binary(stack, |v, w| v.op_lt(w)),
     Opcode::GetLocal(l) => {
       let v = stack.get_mut(*l + *slots).shift();
       stack.push(v);
@@ -178,18 +184,18 @@ fn handle_op(
     }
     Opcode::Not => unary(stack, |v| v.op_not()),
     Opcode::Negate => unary(stack, |v| v.op_negate()),
-    Opcode::Add => binary_fast(stack, |v, w| v.op_add(w)),
-    Opcode::Subtract => binary_fast(stack, |v, w| v.op_subtract(w)),
-    Opcode::Multiply => binary_fast(stack, |v, w| v.op_multiply(w)),
-    Opcode::Divide => binary_fast(stack, |v, w| v.op_divide(w)),
-    Opcode::Mod => binary_fast(stack, |v, w| v.op_mod(w)),
-    Opcode::And => binary_fast(stack, |v, w| v.op_and(w)),
-    Opcode::Or => binary_fast(stack, |v, w| v.op_or(w)),
-    Opcode::Gt => binary_fast(stack, |v, w| v.op_gt(w)),
-    Opcode::Gte => binary_fast(stack, |v, w| v.op_gte(w)),
-    Opcode::Lte => binary_fast(stack, |v, w| v.op_lte(w)),
-    Opcode::Equals => binary_fast(stack, |v, w| v.op_eq(w)),
-    Opcode::NotEquals => binary_fast(stack, |v, w| v.op_neq(w)),
+    Opcode::Add => binary(stack, |v, w| v.op_add(w)),
+    Opcode::Subtract => binary(stack, |v, w| v.op_subtract(w)),
+    Opcode::Multiply => binary(stack, |v, w| v.op_multiply(w)),
+    Opcode::Divide => binary(stack, |v, w| v.op_divide(w)),
+    Opcode::Mod => binary(stack, |v, w| v.op_mod(w)),
+    Opcode::And => binary(stack, |v, w| v.op_and(w)),
+    Opcode::Or => binary(stack, |v, w| v.op_or(w)),
+    Opcode::Gt => binary(stack, |v, w| v.op_gt(w)),
+    Opcode::Gte => binary(stack, |v, w| v.op_gte(w)),
+    Opcode::Lte => binary(stack, |v, w| v.op_lte(w)),
+    Opcode::Equals => binary(stack, |v, w| v.op_eq(w)),
+    Opcode::NotEquals => binary(stack, |v, w| v.op_neq(w)),
     Opcode::GetGlobal(l) => {
       let name = chunk.get_constant(*l).unwrap().as_str().unwrap();
       stack.push(globals.get(name).unwrap().to_value());
@@ -207,7 +213,7 @@ fn handle_op(
         stack[stack_len - len ..].rotate_right(1);
       }
     }
-    Opcode::Call(argc) => return call_value(stack, *argc),
+    Opcode::Call(inst_ind, argc) => return call_value(stack, *inst_ind, *argc),
     Opcode::Return => {
       open_upvals.close_gte(*slots, stack);
       stack.swap_remove(*slots);
@@ -321,31 +327,43 @@ impl StackOp {
   }
 }
 
-fn call_value(stack: &mut Stack, argc: u8) -> Handled {
+fn call_value(stack: &mut Stack, inst_ind: usize, argc: u8) -> Handled {
   let value = rpeek(stack, argc as usize);
+
   match value {
-    Value::Closure(f) => Handled::StackOp(call_closure(f.clone(), argc, stack.len(), false)),
-    Value::Native(f) => call_native(*f, argc, stack),
+    Value::Closure(f) => {
+      Handled::StackOp(call_closure(f.clone(), inst_ind, argc, stack, false))
+    }
+    Value::Native(f) => {
+      Handled::Native(call_native(f.clone(), inst_ind, argc, stack))
+    }
     other => panic!("Not a function: {:?}", other)
   }
 }
 
-fn call_closure(closure: Arc<Closure>, argc: u8, stack_len: usize, exit: bool) -> StackOp {
-  if argc != closure.arity() {
-    panic!("Calling arity {} with {} args.", closure.arity(), argc);
+fn call_closure(f: Arc<Closure>, inst_ind: usize, argc: u8, stack: &mut Stack, exit: bool) -> StackOp {
+  if argc != f.arity() {
+    panic!("Calling arity {} with {} args.", f.arity(), argc);
   }
-  StackOp::Push(CallFrame::new(closure, stack_len - (argc as usize) - 1, exit))
+  let stack_len = stack.len();
+  StackOp::Push(CallFrame::new(f, inst_ind, stack_len - (argc as usize) - 1, exit))
 }
 
-fn call_native(native: Native, argc: u8, stack: &mut Stack) -> Handled {
+fn call_native(f: Arc<FuncNative>, inst_ind: usize, argc: u8, stack: &mut Stack) -> NativeRun {
+  if argc != f.arity() {
+    panic!("Calling arity {} with {} args.", f.arity(), argc);
+  }
+  let native_info = f.instances()[inst_ind].clone();
+  let native = *f.native();
+
   let mut args = Vec::new();
   for _ in 0 .. argc {
     args.push(stack.pop());
   }
   args.reverse();
-  stack.pop(); // once more for the native
+  stack.drop(); // once more for the native
 
-  Handled::Native(NativeRun { native, args })
+  NativeRun { native, args, native_info }
 }
 
 fn unary<F: FnOnce(&Value) -> Value>(stack: &mut Stack, f: F) {
@@ -353,7 +371,7 @@ fn unary<F: FnOnce(&Value) -> Value>(stack: &mut Stack, f: F) {
   *stack.get_mut(last) = f(stack.get(last));
 }
 
-fn binary_fast<F: FnOnce(&Value, &Value) -> Value>(stack: &mut Stack, f: F) {
+fn binary<F: FnOnce(&Value, &Value) -> Value>(stack: &mut Stack, f: F) {
   let last = stack.len() - 1;
   *stack.get_mut(last - 1) = f(stack.get(last - 1), stack.get(last));
   stack.drop();
@@ -361,13 +379,16 @@ fn binary_fast<F: FnOnce(&Value, &Value) -> Value>(stack: &mut Stack, f: F) {
 
 pub struct CallFrame {
   closure: Arc<Closure>,
+  inst_ind: usize,
   ip: usize,
   slots: usize,
   exit: bool
 }
 
 impl CallFrame {
-  pub fn new(closure: Arc<Closure>, slots: usize, exit: bool) -> CallFrame { CallFrame { closure, ip: 0, slots, exit } }
+  pub fn new(closure: Arc<Closure>, inst_ind: usize, slots: usize, exit: bool) -> CallFrame {
+    CallFrame { closure, inst_ind, ip: 0, slots, exit }
+  }
 
   pub fn closure(&self) -> &Closure { &self.closure }
   pub fn ip(&self) -> usize { self.ip }
@@ -375,9 +396,11 @@ impl CallFrame {
   pub fn slots(&self) -> usize { self.slots }
   pub fn slots_mut(&mut self) -> &mut usize { &mut self.slots }
   pub fn exit(&self) -> bool { self.exit }
+  pub fn inst_ind(&self) -> usize { self.inst_ind }
 
   pub fn parts(&mut self) -> (&mut usize, &ObjUpvalues, &Chunk, &usize) {
-    (&mut self.ip, self.closure.upvalues(), self.closure.chunk(), &self.slots)
+    let inst_ind = self.inst_ind();
+    (&mut self.ip, self.closure.upvalues(), self.closure.chunk(inst_ind), &self.slots)
   }
 }
 

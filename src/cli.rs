@@ -1,11 +1,9 @@
 //! The command-line options for the executable.
 
 use alchem::errors::Result;
-use alchem::native_fn;
-use alchem::value::Value;
-use alchem::vm::{Runner, Vm};
+use alchem::vm::Vm;
 use clap::{crate_version, App, AppSettings, Arg, ArgMatches};
-use macro_rules_attribute::macro_rules_attribute;
+// use macro_rules_attribute::macro_rules_attribute;
 // use std::io::{self, BufRead};
 
 /// Get the values from the expected command-line options.
@@ -38,28 +36,28 @@ async fn parse_matches(m: ArgMatches<'_>) -> Result<()> {
 
 async fn run_file(input: &str) -> Result<()> {
   let val = std::fs::read_to_string(input)?;
-  let mut vm = Vm::new();
-  vm.add_native("print", print);
-  vm.add_native("number", number);
-  vm.add_native("recall", recall);
+  let vm = Vm::new();
+  // vm.add_native("print", print);
+  // vm.add_native("number", number);
+  // vm.add_native("recall", recall);
   println!("{:?}", vm.interpret(&val).await);
   Ok(())
 }
 
-#[macro_rules_attribute(native_fn!)]
-async fn number(_vals: Vec<Value>, _runner: &mut Runner) -> Value { Value::Int(42) }
-
-#[macro_rules_attribute(native_fn!)]
-async fn print(vals: Vec<Value>, _runner: &mut Runner) -> Value {
-  println!("*** PRINT: {:?}", vals[0]);
-  Value::Int(1)
-}
-
-#[macro_rules_attribute(native_fn!)]
-async fn recall(vals: Vec<Value>, runner: &mut Runner) -> Value {
-  let f = vals[0].as_closure();
-  runner.run_closure(f, Vec::new()).await
-}
+// #[macro_rules_attribute(native_fn!)]
+// async fn number(_argv: Vec<Value>, _runner: &mut Runner) -> Value { Value::Int(42) }
+// 
+// #[macro_rules_attribute(native_fn!)]
+// async fn print(vals: Vec<Value>, _runner: &mut Runner) -> Value {
+//   println!("*** PRINT: {:?}", vals[0]);
+//   Value::Int(1)
+// }
+// 
+// #[macro_rules_attribute(native_fn!)]
+// async fn recall(vals: Vec<Value>, runner: &mut Runner) -> Value {
+//   let f = vals[0].as_closure();
+//   runner.run_closure(f, Vec::new()).await
+// }
 
 // async fn repl() -> Result<()> {
 //   let mut vm = Vm::new();
