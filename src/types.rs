@@ -1,9 +1,9 @@
 //! Compile-time type information
 
 use crate::common::{Function, MorphIndex};
-use std::sync::Weak;
-use std::iter::{empty, once};
 use crate::either::IterEither3::{A, B, C};
+use std::iter::{empty, once};
+use std::sync::Weak;
 
 #[derive(Clone, Debug)]
 pub enum Type {
@@ -31,9 +31,9 @@ impl PartialEq for Type {
 impl Eq for Type {}
 
 impl Type {
-  pub fn is_depends(&self) -> bool {
-    matches!(self, Self::DependsOn(_))
-  }
+  pub fn is_depends(&self) -> bool { matches!(self, Self::DependsOn(_)) }
+  pub fn and_depends(self, other: Self) -> Type { Type::DependsOn(self.into_depends().and(other.into_depends())) }
+  pub fn or_depends(self, other: Self) -> Type { Type::DependsOn(self.into_depends().or(other.into_depends())) }
 
   pub fn into_depends(self) -> DependsOn {
     match self {
@@ -49,9 +49,7 @@ impl Type {
     }
   }
 
-  pub fn is_known(&self) -> bool {
-    !matches!(self, Self::DependsOn(_) | Self::Unset)
-  }
+  pub fn is_known(&self) -> bool { !matches!(self, Self::DependsOn(_) | Self::Unset) }
 
   pub fn as_function(&self) -> Weak<Function> {
     match self {

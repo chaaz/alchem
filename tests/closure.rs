@@ -26,6 +26,4 @@ async fn closure_fake_recurse() { expect_script("f=fn(f,a){=if a < 1 {=a} else {
 // async fn closure_recurse() { expect_script("f=fn(a){=if a < 1 {=a} else {=a + f(a - 1)}}; =f(3)", 6).await; }
 
 #[tokio::test]
-async fn fib_10() {
-  expect_script("fib=fn(f,n){=if n<2 {=n} else {=f(f,n-2)+f(f,n-1)}};=fib(fib,10)", 55).await;
-}
+async fn fib_10() { expect_script("fib=fn(f,n){=if n<2 {=n} else {=f(f,n-2)+f(f,n-1)}};=fib(fib,10)", 55).await; }

@@ -1,6 +1,6 @@
 //! Scope and emit rules for the compiler.
 
-use crate::common::{Chunk, Function, MorphIndex, Instr, Opcode, Upval};
+use crate::common::{Chunk, Function, Instr, MorphIndex, Opcode, Upval};
 use crate::scanner::Token;
 use crate::types::Type;
 use crate::value::Declared;
@@ -72,13 +72,8 @@ impl ScopeStack {
     }
   }
 
-  pub fn link_build_depends(&mut self, index: &MorphIndex) {
-    self.zero.link_build_depends(index);
-  }
-
-  pub fn collect(&mut self, token: Token) {
-    self.collector.collect(token);
-  }
+  pub fn link_build_depends(&mut self, index: &MorphIndex) { self.zero.link_build_depends(index); }
+  pub fn collect(&mut self, token: Token) { self.collector.collect(token); }
 
   pub fn len(&self) -> usize {
     if self.one.is_some() {
@@ -236,21 +231,15 @@ impl ScopeStack {
     let prev_local = self.resolve_local_at(scope_ind - 1, name);
     if let Some((i, vtype)) = prev_local {
       self.set_captured_at(scope_ind - 1, i, true);
-      let upval_ind = if scope_ind == 1 {
-        self.one.as_mut().unwrap().add_upval(name, i, true, vtype.clone())
-      } else {
-        0
-      };
+      let upval_ind =
+        if scope_ind == 1 { self.one.as_mut().unwrap().add_upval(name, i, true, vtype.clone()) } else { 0 };
       return Some((upval_ind, vtype));
     }
 
     let prev_upval = self.resolve_upval_recurse(name, scope_ind - 1);
     if let Some((i, vtype)) = prev_upval {
-      let upval_ind = if scope_ind == 1 {
-        self.one.as_mut().unwrap().add_upval(name, i, false, vtype.clone())
-      } else {
-        0
-      };
+      let upval_ind =
+        if scope_ind == 1 { self.one.as_mut().unwrap().add_upval(name, i, false, vtype.clone()) } else { 0 };
       return Some((upval_ind, vtype));
     }
 
@@ -309,7 +298,7 @@ pub struct ScopeZero {
   known_upvals: HashMap<String, (usize, Type)>,
 
   // common
-  locals: Locals,
+  locals: Locals
 }
 
 impl ScopeZero {
@@ -320,9 +309,7 @@ impl ScopeZero {
   fn locals(&self) -> &Locals { &self.locals }
   fn locals_mut(&mut self) -> &mut Locals { &mut self.locals }
 
-  pub fn pre_found_upval(&self, name: &str) -> Option<&(usize, Type)> {
-    self.known_upvals.get(name)
-  }
+  pub fn pre_found_upval(&self, name: &str) -> Option<&(usize, Type)> { self.known_upvals.get(name) }
 
   fn flip_depends(&mut self) -> &mut Vec<MorphIndex> {
     if matches!(self.mode, ZeroMode::Emitting(_)) {
@@ -337,7 +324,9 @@ impl ScopeZero {
 
   pub fn link_build_depends(&mut self, index: &MorphIndex) {
     let depends = self.flip_depends();
-    if !depends.contains(index) { depends.push(index.clone()) }
+    if !depends.contains(index) {
+      depends.push(index.clone())
+    }
   }
 
   pub fn into_mode(self) -> ZeroMode { self.mode }
@@ -371,11 +360,11 @@ pub struct ScopeOne {
   known_upvals: HashMap<String, (usize, Type)>,
 
   // common
-  locals: Locals,
+  locals: Locals
 }
 
 impl ScopeOne {
-  pub fn new() -> ScopeOne { ScopeOne { upvals: Vec::new(), known_upvals:HashMap::new(), locals: Locals::new() } }
+  pub fn new() -> ScopeOne { ScopeOne { upvals: Vec::new(), known_upvals: HashMap::new(), locals: Locals::new() } }
   fn locals(&self) -> &Locals { &self.locals }
   fn locals_mut(&mut self) -> &mut Locals { &mut self.locals }
 
@@ -397,7 +386,7 @@ impl ScopeOne {
 }
 
 pub struct ScopeLater {
-  locals: Locals,
+  locals: Locals
 }
 
 impl ScopeLater {
@@ -408,7 +397,7 @@ impl ScopeLater {
 
 struct Locals {
   locals: Vec<Local>,
-  scope_depth: u16,
+  scope_depth: u16
 }
 
 impl Locals {
@@ -474,9 +463,7 @@ impl Locals {
     local.depth > 0
   }
 
-  pub fn set_captured(&mut self, locals_ind: usize, captured: bool) {
-    self.locals[locals_ind].set_captured(captured);
-  }
+  pub fn set_captured(&mut self, locals_ind: usize, captured: bool) { self.locals[locals_ind].set_captured(captured); }
 }
 
 #[derive(Debug)]

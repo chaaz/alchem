@@ -3,8 +3,8 @@
 use crate::common::{Function, MorphIndex, Opcode, Upval};
 use crate::errors::Error;
 use crate::scanner::{Scanner, Token, TokenType, TokenTypeDiscr};
-use crate::scope::{ScopeStack, ScopeZero, ScopeOne, ScopeLater, Jump};
-use crate::types::{Type, DependsOn};
+use crate::scope::{Jump, ScopeLater, ScopeOne, ScopeStack, ScopeZero};
+use crate::types::{DependsOn, Type};
 use crate::value::Declared;
 use lazy_static::lazy_static;
 use std::collections::HashMap;
@@ -35,7 +35,7 @@ pub struct Compiler {
   had_error: bool,
   panic_mode: bool,
   scope: ScopeStack,
-  globals: HashMap<String, Type>,
+  globals: HashMap<String, Type>
 }
 
 impl Compiler {
@@ -258,10 +258,12 @@ impl Compiler {
 
   fn if_block(&mut self) -> Type {
     let test_type = self.expression();
-    assert_eq!(test_type, Type::Bool);
+    assert!(self.scope.len() > 1 || test_type != Type::Unset);
+    assert!(!test_type.is_known() || test_type == Type::Bool);
     let false_jump = self.emit_jump(Opcode::initial_jump_if_false());
     self.emit_instr(Opcode::Pop);
-    let b1_type = self.block();
+    let mut b1_type = self.block();
+    assert!(self.scope.len() > 1 || b1_type != Type::Unset);
     let done_jump = self.emit_jump(Opcode::initial_jump());
     self.patch_jump(false_jump);
     self.emit_instr(Opcode::Pop);
@@ -269,12 +271,21 @@ impl Compiler {
     let mut d2_jumps = Vec::new();
     while let TokenTypeDiscr::ElseifWord = self.current_ttd() {
       self.consume(TokenTypeDiscr::ElseifWord);
-      let test_type = self.expression();
-      assert_eq!(test_type, Type::Bool);
+      let in_test_type = self.expression();
+      assert!(self.scope.len() > 1 || in_test_type != Type::Unset);
+      assert!(!in_test_type.is_known() || in_test_type == Type::Bool);
       let f2_jump = self.emit_jump(Opcode::initial_jump_if_false());
       self.emit_instr(Opcode::Pop);
       let bx_type = self.block();
-      assert_eq!(b1_type, bx_type);
+      assert!(self.scope.len() > 1 || bx_type != Type::Unset);
+      assert!(!b1_type.is_known() || !bx_type.is_known() || b1_type == bx_type);
+      if self.scope.len() == 1 {
+        if b1_type.is_depends() && bx_type.is_depends() {
+          b1_type = b1_type.or_depends(bx_type);
+        } else if !bx_type.is_depends() {
+          b1_type = bx_type;
+        }
+      }
       d2_jumps.push(self.emit_jump(Opcode::initial_jump()));
       self.patch_jump(f2_jump);
       self.emit_instr(Opcode::Pop);
@@ -282,7 +293,15 @@ impl Compiler {
 
     self.consume(TokenTypeDiscr::ElseWord);
     let b2_type = self.block();
-    assert_eq!(b1_type, b2_type);
+    assert!(self.scope.len() > 1 || b2_type != Type::Unset);
+    assert!(!b1_type.is_known() || !b2_type.is_known() || b1_type == b2_type);
+    if self.scope.len() == 1 {
+      if b1_type.is_depends() && b2_type.is_depends() {
+        b1_type = b1_type.or_depends(b2_type);
+      } else if !b2_type.is_depends() {
+        b1_type = b2_type;
+      }
+    }
     self.patch_jump(done_jump);
     for jump in d2_jumps {
       self.patch_jump(jump);
@@ -323,12 +342,7 @@ impl Compiler {
     self.consume(TokenTypeDiscr::CloseCurl);
     self.emit_instr(Opcode::Return);
 
-    println!("ending function at {}", self.scope.len());
-
     if self.scope.len() == 2 {
-
-      println!("ending 2");
-
       let (scope_one, code) = self.pop_scope_one();
       let (upvals, known_upvals) = scope_one.into_upvals();
       println!("captured known_upvals: {:?}", known_upvals);
@@ -403,11 +417,11 @@ impl Compiler {
 
     match ttd {
       TokenTypeDiscr::Minus => {
-        assert_eq!(outtype, Type::Int);
+        assert!(!outtype.is_known() || outtype == Type::Int);
         self.emit_instr(Opcode::Negate);
       }
       TokenTypeDiscr::Bang => {
-        assert_eq!(outtype, Type::Bool);
+        assert!(!outtype.is_known() || outtype == Type::Bool);
         self.emit_instr(Opcode::Not);
       }
       other => panic!("Unexpected unary op: {:?}", other)
@@ -420,7 +434,14 @@ impl Compiler {
     let precedence = self.get_rule(ttd).precedence().up();
     let mut rtype = self.parse_precendence(precedence);
 
-    assert_eq!(ltype, &rtype);
+    if self.scope.len() > 1 {
+      return Type::Unset;
+    }
+
+    // At level 1, we can accept unknown types, but not unset or mismatched types.
+    assert!(ltype != &Type::Unset);
+    assert!(rtype != Type::Unset);
+    assert!(!ltype.is_known() || !rtype.is_known() || ltype == &rtype);
 
     match ttd {
       TokenTypeDiscr::Minus
@@ -431,14 +452,13 @@ impl Compiler {
       | TokenTypeDiscr::Lt
       | TokenTypeDiscr::Gte
       | TokenTypeDiscr::Lte => {
-        assert_eq!(ltype, &Type::Int)
+        assert!(!ltype.is_known() || ltype == &Type::Int)
       }
       TokenTypeDiscr::Plus => {
-        assert!(ltype == &Type::Int || ltype == &Type::String)
+        assert!(!ltype.is_known() || ltype == &Type::Int || ltype == &Type::String)
       }
-      TokenTypeDiscr::DoubleEq
-      | TokenTypeDiscr::NotEq => {
-        assert!(ltype == &Type::Int || ltype == &Type::String || ltype == &Type::Bool)
+      TokenTypeDiscr::DoubleEq | TokenTypeDiscr::NotEq => {
+        assert!(!ltype.is_known() || ltype == &Type::Int || ltype == &Type::String || ltype == &Type::Bool)
       }
       _ => ()
     }
@@ -450,7 +470,13 @@ impl Compiler {
       | TokenTypeDiscr::Lt
       | TokenTypeDiscr::Gte
       | TokenTypeDiscr::Lte => {
-        rtype = Type::Bool;
+        if ltype.is_known() && rtype.is_known() {
+          rtype = Type::Bool;
+        } else if ltype.is_depends() && rtype.is_depends() {
+          rtype = rtype.and_depends(ltype.clone());
+        } else if ltype.is_depends() {
+          rtype = ltype.clone();
+        }
       }
       _ => ()
     }
@@ -562,8 +588,7 @@ struct Rule {
 
 impl Rule {
   pub fn new(
-    prefix: Option<for<'r> fn(&'r mut Compiler) -> Type>,
-    infix: Option<for<'r> fn(&'r mut Compiler, &Type) -> Type>,
+    prefix: Option<for<'r> fn(&'r mut Compiler) -> Type>, infix: Option<for<'r> fn(&'r mut Compiler, &Type) -> Type>,
     precedence: Precedence
   ) -> Rule {
     Rule { prefix, infix, precedence }

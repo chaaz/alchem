@@ -1,8 +1,8 @@
 //! The actual VM for parsing the bytecode.
 
-use crate::collapsed::{Chunk, FuncNative, Declared};
-use crate::common::{Closure, Instr, Native, ObjUpvalue, ObjUpvalues, Opcode, NativeInfo};
-use crate::compiler::{compile, build_function_with_0args_from_scope0};
+use crate::collapsed::{Chunk, Declared, FuncNative};
+use crate::common::{Closure, Instr, Native, NativeInfo, ObjUpvalue, ObjUpvalues, Opcode};
+use crate::compiler::{build_function_with_0args_from_scope0, compile};
 use crate::inline::Inline;
 use crate::value::Value;
 use std::collections::HashMap;
@@ -331,12 +331,8 @@ fn call_value(stack: &mut Stack, inst_ind: usize, argc: u8) -> Handled {
   let value = rpeek(stack, argc as usize);
 
   match value {
-    Value::Closure(f) => {
-      Handled::StackOp(call_closure(f.clone(), inst_ind, argc, stack, false))
-    }
-    Value::Native(f) => {
-      Handled::Native(call_native(f.clone(), inst_ind, argc, stack))
-    }
+    Value::Closure(f) => Handled::StackOp(call_closure(f.clone(), inst_ind, argc, stack, false)),
+    Value::Native(f) => Handled::Native(call_native(f.clone(), inst_ind, argc, stack)),
     other => panic!("Not a function: {:?}", other)
   }
 }

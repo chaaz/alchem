@@ -46,13 +46,13 @@ async fn run_file(input: &str) -> Result<()> {
 
 // #[macro_rules_attribute(native_fn!)]
 // async fn number(_argv: Vec<Value>, _runner: &mut Runner) -> Value { Value::Int(42) }
-// 
+//
 // #[macro_rules_attribute(native_fn!)]
 // async fn print(vals: Vec<Value>, _runner: &mut Runner) -> Value {
 //   println!("*** PRINT: {:?}", vals[0]);
 //   Value::Int(1)
 // }
-// 
+//
 // #[macro_rules_attribute(native_fn!)]
 // async fn recall(vals: Vec<Value>, runner: &mut Runner) -> Value {
 //   let f = vals[0].as_closure();

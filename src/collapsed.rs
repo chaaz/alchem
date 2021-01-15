@@ -3,10 +3,10 @@
 //! It may be helpful to think of the types defined here are the "real" types, and their equivalents in `common`
 //! and `value` as builders.
 
-use crate::common::{MorphStatus, Instr, Native, NativeInfo};
+use crate::common::{Instr, MorphStatus, Native, NativeInfo};
+use crate::value::Value;
 use std::fmt;
 use std::sync::Arc;
-use crate::value::Value;
 
 pub enum Declared {
   Float(f64),
@@ -25,7 +25,7 @@ impl fmt::Debug for Declared {
       Self::Bool(v) => write!(f, "{}", v),
       Self::String(v) => write!(f, "\"{}\"", v),
       Self::Function(v) => write!(f, "{:?}", v),
-      Self::Native(v) => write!(f, "{:?}", v),
+      Self::Native(v) => write!(f, "{:?}", v)
     }
   }
 }
@@ -85,7 +85,7 @@ pub fn collapse_function(f: Arc<crate::common::Function>) -> Declared {
 pub struct FuncNative {
   arity: u8,
   native: Native,
-  instances: Vec<NativeInfo>,
+  instances: Vec<NativeInfo>
 }
 
 impl fmt::Debug for FuncNative {
@@ -101,11 +101,9 @@ impl FuncNative {
     let (arity, morphs) = f.into_collapse();
     let instances = morphs
       .into_iter()
-      .map(|i| {
-        match i.into_status() {
-          MorphStatus::NativeCompleted(ninfo, _) => ninfo,
-          _ => panic!("Native instance not completed natively.")
-        }
+      .map(|i| match i.into_status() {
+        MorphStatus::NativeCompleted(ninfo, _) => ninfo,
+        _ => panic!("Native instance not completed natively.")
       })
       .collect();
 
@@ -119,7 +117,7 @@ impl FuncNative {
 
 pub struct Function {
   arity: u8,
-  instances: Vec<Chunk>,
+  instances: Vec<Chunk>
 }
 
 impl fmt::Debug for Function {
@@ -135,11 +133,9 @@ impl Function {
     let (arity, morphs) = f.into_collapse();
     let instances = morphs
       .into_iter()
-      .map(|i| {
-        match i.into_status() {
-          MorphStatus::Completed(chunk, _) => Chunk::from_common(chunk),
-          _ => panic!("Function instance not completed.")
-        }
+      .map(|i| match i.into_status() {
+        MorphStatus::Completed(chunk, _) => Chunk::from_common(chunk),
+        _ => panic!("Function instance not completed.")
       })
       .collect();
 

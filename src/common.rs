@@ -1,9 +1,9 @@
 //! Common info for the parser.
 
-use crate::scope::ZeroMode;
-use crate::scanner::Token;
 use crate::compiler::Compiler;
-use crate::types::{Type, DependsOn};
+use crate::scanner::Token;
+use crate::scope::ZeroMode;
+use crate::types::{DependsOn, Type};
 use crate::value::{Declared, Value};
 use crate::vm::Runner;
 use std::collections::HashMap;
@@ -46,16 +46,14 @@ impl Function {
       arity: 0,
       fn_type: FnType::Alchem(Vec::new(), Vec::new()),
       known_upvals: HashMap::new(),
-      instances: Mutex::new(vec![
-        Monomorph {
-          args: Vec::new(),
-          status: MorphStatus::Completed(chunk, stype),
-          build_dependencies: Vec::new(),
-          type_dependencies: DependsOn::None,
-          build_dependents: Vec::new(),
-          type_dependents: Vec::new()
-        }
-      ])
+      instances: Mutex::new(vec![Monomorph {
+        args: Vec::new(),
+        status: MorphStatus::Completed(chunk, stype),
+        build_dependencies: Vec::new(),
+        type_dependencies: DependsOn::None,
+        build_dependents: Vec::new(),
+        type_dependents: Vec::new()
+      }])
     }
   }
 
@@ -109,25 +107,15 @@ impl Function {
       let morph = &instances[inst_ind];
 
       let needs_rebuild = morph.status.needs_rebuild();
-      let build_deps = if needs_rebuild {
-        morph.build_dependencies.clone()
-      } else {
-        Vec::new()
-      };
+      let build_deps = if needs_rebuild { morph.build_dependencies.clone() } else { Vec::new() };
 
       let needs_type = !morph.status.is_known();
-      let type_deps = if needs_type {
-        morph.type_dependencies.clone()
-      } else {
-        DependsOn::None
-      };
+      let type_deps = if needs_type { morph.type_dependencies.clone() } else { DependsOn::None };
 
       (needs_rebuild, build_deps, needs_type, type_deps)
     };
 
-    if (needs_rebuild && build_deps.iter().all(|d| d.is_known()))
-      || (needs_type && type_deps.is_known())
-    {
+    if (needs_rebuild && build_deps.iter().all(|d| d.is_known())) || (needs_type && type_deps.is_known()) {
       self.replay(inst_ind)
     } else {
       self.known_type(inst_ind)
@@ -280,24 +268,20 @@ pub enum MorphStatus {
   Reserved,
   Known(Type),
   Completed(Chunk, Type),
-  NativeCompleted(NativeInfo, Type),
+  NativeCompleted(NativeInfo, Type)
 }
 
 impl MorphStatus {
   pub fn known_type(&self) -> Option<Type> {
     match self {
       Self::Known(t) | Self::Completed(_, t) if t.is_known() => Some(t.clone()),
-      _ => None,
+      _ => None
     }
   }
 
-  pub fn needs_rebuild(&self) -> bool {
-    !matches!(self, Self::Completed(..))
-  }
+  pub fn needs_rebuild(&self) -> bool { !matches!(self, Self::Completed(..)) }
 
-  pub fn is_known(&self) -> bool {
-    self.known_type().is_some()
-  }
+  pub fn is_known(&self) -> bool { self.known_type().is_some() }
 }
 
 #[derive(Clone)]
@@ -336,20 +320,26 @@ impl MorphIndex {
 
   pub fn exists(&self) -> bool { self.function.strong_count() > 0 }
 
-  pub fn is_known(&self) -> bool {
-    self.operate_morph(|morph| morph.is_known()).unwrap_or(true)
-  }
+  pub fn is_known(&self) -> bool { self.operate_morph(|morph| morph.is_known()).unwrap_or(true) }
 
   fn replay_if_ready(&self) -> Option<Option<Type>> {
     self.operate_func(|func, inst_ind| func.replay_if_ready(inst_ind))
   }
 
   pub fn add_build_dependency(&self, i: MorphIndex) {
-    self.operate_morph(|morph| if !morph.build_dependencies.contains(&i) { morph.build_dependencies.push(i); });
+    self.operate_morph(|morph| {
+      if !morph.build_dependencies.contains(&i) {
+        morph.build_dependencies.push(i);
+      }
+    });
   }
 
   pub fn add_build_dependent(&self, i: MorphIndex) {
-    self.operate_morph(|morph| if !morph.build_dependents.contains(&i) { morph.build_dependents.push(i); });
+    self.operate_morph(|morph| {
+      if !morph.build_dependents.contains(&i) {
+        morph.build_dependents.push(i);
+      }
+    });
   }
 
   pub fn remove_build_dependent(&self, i: MorphIndex) {
@@ -357,7 +347,11 @@ impl MorphIndex {
   }
 
   pub fn add_type_dependent(&self, i: MorphIndex) {
-    self.operate_morph(|morph| if !morph.type_dependents.contains(&i) { morph.type_dependents.push(i); });
+    self.operate_morph(|morph| {
+      if !morph.type_dependents.contains(&i) {
+        morph.type_dependents.push(i);
+      }
+    });
   }
 
   pub fn remove_type_dependent(&self, i: MorphIndex) {
@@ -375,7 +369,7 @@ impl MorphIndex {
 
 pub struct Upval {
   index: usize,
-  is_local: bool,
+  is_local: bool
 }
 
 impl fmt::Debug for Upval {
@@ -385,9 +379,7 @@ impl fmt::Debug for Upval {
 }
 
 impl Upval {
-  pub fn new(index: usize, is_local: bool) -> Upval {
-    Upval { index, is_local }
-  }
+  pub fn new(index: usize, is_local: bool) -> Upval { Upval { index, is_local } }
 
   pub fn index(&self) -> usize { self.index }
   pub fn is_local(&self) -> bool { self.is_local }
@@ -489,7 +481,7 @@ impl Default for Chunk {
 
 impl Chunk {
   pub fn new() -> Chunk { Chunk { constants: Constants::new(), code: Vec::new() } }
-  pub fn into_collapse(self) -> (Vec<Declared>, Vec<Instr>) { (self.constants.values, self.code)}
+  pub fn into_collapse(self) -> (Vec<Declared>, Vec<Instr>) { (self.constants.values, self.code) }
 
   pub fn add_instr(&mut self, instr: Instr) -> usize {
     self.code.push(instr);

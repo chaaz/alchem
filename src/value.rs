@@ -1,7 +1,7 @@
 //! The values representable in our language.
 
-use crate::common::{Closure, Function};
 use crate::collapsed::FuncNative;
+use crate::common::{Closure, Function};
 use std::cmp::PartialEq;
 use std::fmt;
 use std::sync::Arc;
@@ -253,7 +253,7 @@ impl fmt::Debug for Declared {
       Self::Int(v) => write!(f, "{}", v),
       Self::Bool(v) => write!(f, "{}", v),
       Self::String(v) => write!(f, "\"{}\"", v),
-      Self::Function(v) => write!(f, "{:?}", v),
+      Self::Function(v) => write!(f, "{:?}", v)
     }
   }
 }
