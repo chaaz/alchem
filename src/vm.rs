@@ -56,9 +56,15 @@ pub struct Runner {
 }
 
 impl Runner {
-  pub async fn run_closure(&mut self, closure: Arc<Closure>, inst_ind: usize, args: Vec<Value>) -> Value {
-    // TODO(later): also handle native, via either a separate "run_native", or a "run_value" with switch.
+  pub async fn run_value(&mut self, value: Value, inst_ind: usize, args: Vec<Value>) -> Value {
+    match value {
+      Value::Closure(closure) => self.run_closure(closure, inst_ind, args).await,
+      Value::Native(func_native) => self.run_native(func_native, inst_ind, args).await,
+      other => panic!("Value is not runnable: {:?}", other)
+    }
+  }
 
+  pub async fn run_closure(&mut self, closure: Arc<Closure>, inst_ind: usize, args: Vec<Value>) -> Value {
     self.stack.push(closure.clone().into());
     debug_assert!(args.len() < 255);
     let args_len = args.len() as u8;
@@ -66,6 +72,12 @@ impl Runner {
 
     call_closure(closure, inst_ind, args_len, &mut self.stack, true).perform(&mut self.call_stack);
     self.run_loop().await
+  }
+
+  pub async fn run_native(&mut self, func_native: Arc<FuncNative>, inst_ind: usize, args: Vec<Value>) -> Value {
+    let native_info = func_native.instances()[inst_ind].clone();
+    let native = func_native.native();
+    (native)(args, native_info, self).await
   }
 
   async fn run_loop(&mut self) -> Value {
