@@ -155,15 +155,11 @@ impl ScopeStack {
   }
 
   pub fn push_scope(&mut self) {
-    println!("pre-push: scope level now {}", self.len());
-
     if self.one.is_none() {
       self.one = Some(ScopeOne::new());
     } else {
       self.later.push(ScopeLater::new());
     }
-
-    println!("push: scope level now {}", self.len());
   }
 
   pub fn start_collecting(&mut self) {
@@ -176,14 +172,11 @@ impl ScopeStack {
 
   #[allow(clippy::let_and_return)]
   pub fn pop_scope_one(&mut self) -> (ScopeOne, Vec<Token>) {
-    println!("pre-pop-one: scope level now {}", self.len());
-
     if !self.later.is_empty() {
       panic!("Can't pop from scope > 2");
     } else if self.one.is_some() {
       let tokens = self.collector.report();
       let scope = self.one.take().unwrap();
-      println!("pop-one: scope level now {}", self.len());
       (scope, tokens)
     } else {
       panic!("Can't pop from scope == 1");
@@ -201,10 +194,7 @@ impl ScopeStack {
 
   pub fn pop_scope_zero(self) -> ScopeZero { self.zero }
 
-  pub fn add_local(&mut self, name: String) {
-    println!("adding local \"{}\" at scope level {}", name, self.len());
-    self.locals_mut().add_local(Local::new(name));
-  }
+  pub fn add_local(&mut self, name: String) { self.locals_mut().add_local(Local::new(name)); }
 
   pub fn resolve_local_at(&self, scope_ind: usize, name: &str) -> Option<(usize, Type)> {
     self.locals_at(scope_ind).resolve_local(name)
@@ -429,7 +419,6 @@ impl Locals {
       panic!("Too many locals: {}", self.locals.len());
     }
 
-    println!("adding local {} at {}", local.name(), self.locals.len());
     self.locals.push(local);
   }
 
@@ -452,7 +441,6 @@ impl Locals {
   }
 
   pub fn mark_last_initialized(&mut self, utype: Type) {
-    println!("marking initialized {:?} at {} to {}", utype, self.locals.len() - 1, self.scope_depth);
     let local = self.locals.last_mut().unwrap();
     local.depth = self.scope_depth;
     local.local_type = utype;

@@ -2,7 +2,7 @@
 
 use crate::collapsed::{Chunk, Declared, FuncNative};
 use crate::common::{Closure, Instr, Native, NativeInfo, ObjUpvalue, ObjUpvalues, Opcode};
-use crate::compiler::{build_function_with_0args_from_scope0, compile};
+use crate::compiler::{collapse_script, compile};
 use crate::inline::Inline;
 use crate::value::Value;
 use std::collections::HashMap;
@@ -20,7 +20,6 @@ type Stack = Inline<Value>;
 pub struct Vm {
   call_stack: CallStack,
   stack: Stack,
-  globals: Globals,
   open_upvals: OpenUpvalues
 }
 
@@ -29,28 +28,21 @@ impl Default for Vm {
 }
 
 impl Vm {
-  pub fn new() -> Vm {
-    Vm { call_stack: Vec::new(), stack: Stack::new(), globals: HashMap::new(), open_upvals: OpenUpvalues::new() }
-  }
+  pub fn new() -> Vm { Vm { call_stack: Vec::new(), stack: Stack::new(), open_upvals: OpenUpvalues::new() } }
 
-  // TODO(later):
-  // pub fn add_native(&mut self, name: impl ToString, arity: u8, native: Native, typen: TypeNative) {
-  // }
-
-  pub async fn interpret(self, source: &str) -> Value {
+  pub async fn interpret(self, source: &str, globals: crate::common::Globals) -> Value {
     debug_assert_eq!(self.stack.len(), 0);
     debug_assert_eq!(self.call_stack.len(), 0);
 
     // last minute code changes
-    let (script, stype) = compile(source);
-    let (function, inst_ind) = build_function_with_0args_from_scope0(script, stype);
+    let (script, stype) = compile(source, &globals);
+    let (function, inst_ind, globals) = collapse_script(script, stype, globals);
 
     // lock it in
     let function = Arc::new(function);
     let closure = Arc::new(Closure::new(function, Vec::new()));
 
-    let mut ftr =
-      Runner { call_stack: self.call_stack, stack: self.stack, globals: self.globals, open_upvals: self.open_upvals };
+    let mut ftr = Runner { call_stack: self.call_stack, stack: self.stack, globals, open_upvals: self.open_upvals };
 
     ftr.run_closure(closure, inst_ind, Vec::new()).await
   }
@@ -163,7 +155,7 @@ pub struct NativeRun {
 
 impl NativeRun {
   pub fn run<'r>(self, runner: &'r mut Runner) -> Pin<Box<dyn Future<Output = Value> + Send + 'r>> {
-    (self.native)(self.args, &self.native_info, runner)
+    (self.native)(self.args, self.native_info, runner)
   }
 }
 

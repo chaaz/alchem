@@ -1,6 +1,7 @@
 //! The alchem compiler.
 
-use crate::common::{Function, MorphIndex, Opcode, Upval};
+use crate::collapsed::collapse_function;
+use crate::common::{Function, Globals, MorphIndex, Opcode, Upval};
 use crate::errors::Error;
 use crate::scanner::{Scanner, Token, TokenType, TokenTypeDiscr};
 use crate::scope::{Jump, ScopeLater, ScopeOne, ScopeStack, ScopeZero};
@@ -16,30 +17,34 @@ lazy_static! {
   static ref RULES: HashMap<TokenTypeDiscr, Rule> = construct_rules();
 }
 
-pub fn compile(source: &str) -> (ScopeZero, Type) {
+pub fn compile(source: &str, globals: &Globals) -> (ScopeZero, Type) {
   let mut scanner = Scanner::new(source);
-  let compiler = Compiler::new(scanner.drain_into_iter());
-  compiler.compile()
+  let compiler = Compiler::new(scanner.drain_into_iter(), globals);
+  let (zero, stype) = compiler.compile();
+  (zero, stype)
 }
 
-pub fn build_function_with_0args_from_scope0(scope: ScopeZero, stype: Type) -> (crate::collapsed::Function, usize) {
+pub fn collapse_script(
+  scope: ScopeZero, stype: Type, globals: Globals
+) -> (crate::collapsed::Function, usize, HashMap<String, crate::collapsed::Declared>) {
   let chunk = scope.into_chunk();
   let function = Function::script(chunk, stype);
-  (crate::collapsed::Function::from_common(Arc::new(function)), 0)
+  let globals = globals.into_iter().map(|(k, v)| (k, collapse_function(v))).collect();
+  (crate::collapsed::Function::from_common(Arc::new(function)), 0, globals)
 }
 
-pub struct Compiler {
+pub struct Compiler<'g> {
   scanner: IntoIter<Token>,
   current: Token,
   previous: Token,
   had_error: bool,
   panic_mode: bool,
   scope: ScopeStack,
-  globals: HashMap<String, Type>
+  globals: &'g Globals
 }
 
-impl Compiler {
-  pub fn new(scanner: IntoIter<Token>) -> Compiler {
+impl<'g> Compiler<'g> {
+  pub fn new(scanner: IntoIter<Token>, globals: &'g Globals) -> Compiler<'g> {
     let mut compiler = Compiler {
       current: Token::new(TokenType::Bof, 0),
       previous: Token::new(TokenType::Bof, 0),
@@ -47,7 +52,7 @@ impl Compiler {
       had_error: false,
       panic_mode: false,
       scope: ScopeStack::new(),
-      globals: HashMap::new()
+      globals
     };
     compiler.advance();
     compiler.begin_scope();
@@ -55,8 +60,9 @@ impl Compiler {
   }
 
   pub fn replay(
-    pnames: Vec<String>, args: Vec<Type>, code: IntoIter<Token>, known_upvals: HashMap<String, (usize, Type)>
-  ) -> Compiler {
+    pnames: Vec<String>, args: Vec<Type>, code: IntoIter<Token>, known_upvals: HashMap<String, (usize, Type)>,
+    globals: &'g Globals
+  ) -> Compiler<'g> {
     let mut compiler = Compiler {
       current: Token::new(TokenType::Bof, 0),
       previous: Token::new(TokenType::Bof, 0),
@@ -64,7 +70,7 @@ impl Compiler {
       had_error: false,
       panic_mode: false,
       scope: ScopeStack::known(known_upvals),
-      globals: HashMap::new()
+      globals
     };
 
     compiler.advance();
@@ -180,12 +186,11 @@ impl Compiler {
 
   fn assignment(&mut self) {
     if self.token_check(TokenTypeDiscr::Identifier) {
-      let name = self.parse_variable();
+      let _name = self.parse_variable();
       self.consume(TokenTypeDiscr::Equals);
       let vtype = self.expression();
       self.consume(TokenTypeDiscr::Semi);
       self.mark_initialized(vtype);
-      println!("mark_initialized \"{}\".", name);
     } else {
       panic!("Unexpected assignment token {:?}", self.current)
     }
@@ -243,7 +248,10 @@ impl Compiler {
       } else {
         let g = self.add_constant(name.clone().into());
         self.emit_instr(Opcode::GetGlobal(g));
-        self.globals.get(&name).unwrap_or_else(|| panic!("No global type \"{}\".", name)).clone()
+
+        // assume all globals are natives.
+        let f = self.globals.get(&name).unwrap_or_else(|| panic!("No global type \"{}\".", name));
+        Type::FnSync(Arc::downgrade(f))
       }
     } else {
       panic!("Unexpected token for named variable {:?}", self.previous)
@@ -345,7 +353,6 @@ impl Compiler {
     if self.scope.len() == 2 {
       let (scope_one, code) = self.pop_scope_one();
       let (upvals, known_upvals) = scope_one.into_upvals();
-      println!("captured known_upvals: {:?}", known_upvals);
       let function = Function::new_alchem(arity, param_names, code, known_upvals);
       let function = self.emit_closure(upvals, function);
       Type::FnSync(Arc::downgrade(&function))
@@ -367,11 +374,7 @@ impl Compiler {
       // thesis: because of scope boundries, it is impossible to compile a function call in which the function
       // does not exist, so we can safely upgrade the function pointer.
       let function = function.upgrade().unwrap();
-
-      let (inst_ind, ftype) = function.find_known_type(&args).unwrap_or_else(|| {
-        let inst_ind = function.reserve_inst(args);
-        (inst_ind, function.replay(inst_ind))
-      });
+      let (inst_ind, ftype) = function.find_or_build(args, self.globals);
 
       match ftype {
         Some(ftype) => {

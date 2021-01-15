@@ -7,13 +7,13 @@
 #[macro_use]
 pub mod errors;
 #[macro_use]
+pub mod value;
 pub(crate) mod collapsed;
 pub(crate) mod common;
 pub(crate) mod compiler;
-pub mod either;
+pub(crate) mod either;
 pub(crate) mod inline;
 pub(crate) mod scanner;
 pub(crate) mod scope;
 pub(crate) mod types;
-pub mod value;
 pub mod vm;

@@ -1,10 +1,21 @@
 //! The values representable in our language.
 
 use crate::collapsed::FuncNative;
-use crate::common::{Closure, Function};
+use crate::common::{Closure, Native, TypeNative};
 use std::cmp::PartialEq;
+use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
+
+pub use crate::common::{Function, Globals, MorphStatus, NativeInfo};
+pub use crate::types::Type;
+
+pub fn new_globals() -> Globals { HashMap::new() }
+
+pub fn add_native(globals: &mut Globals, name: impl ToString, arity: u8, native: Native, typen: TypeNative) {
+  let function = Function::new_native(arity, native, typen);
+  globals.insert(name.to_string(), Arc::new(function));
+}
 
 pub enum Value {
   Float(f64),
@@ -315,6 +326,36 @@ impl Declared {
   //   }
   // }
 }
+
+// convert
+//
+// async fn print(vals: Vec<Value>, runner: &mut Runner) -> Value
+//
+// to
+//
+// fn print<'r>(vals: Vec<Value>, _runner: &'r mut Runner) -> Pin<Box<dyn Future<Output = Value> + Send + 'r>>
+
+#[macro_export]
+macro_rules! native_fn {(
+  $( #[$attr:meta] )* // includes doc strings
+  $pub:vis
+  async
+  fn $fname:ident (
+    $arg1_i:ident : $arg1_t:ty, $arg2_i:ident : $arg2_t:ty, $arg3_i:ident : &mut $arg3_t:ty
+  ) -> $Ret:ty
+  {
+      $($body:tt)*
+  }
+) => (
+  $( #[$attr] )*
+  $pub
+  fn $fname<'r> (
+    $arg1_i : $arg1_t, $arg2_i : $arg2_t, $arg3_i : &'r mut $arg3_t
+  ) -> ::std::pin::Pin<::std::boxed::Box<dyn ::std::future::Future<Output = $Ret> + ::std::marker::Send + 'r>>
+  {
+      ::std::boxed::Box::pin(async move { $($body)* })
+  }
+)}
 
 #[cfg(test)]
 mod test {

@@ -3,7 +3,7 @@
 use crate::common::{Function, MorphIndex};
 use crate::either::IterEither3::{A, B, C};
 use std::iter::{empty, once};
-use std::sync::Weak;
+use std::sync::{Arc, Weak};
 
 #[derive(Clone, Debug)]
 pub enum Type {
@@ -34,6 +34,10 @@ impl Type {
   pub fn is_depends(&self) -> bool { matches!(self, Self::DependsOn(_)) }
   pub fn and_depends(self, other: Self) -> Type { Type::DependsOn(self.into_depends().and(other.into_depends())) }
   pub fn or_depends(self, other: Self) -> Type { Type::DependsOn(self.into_depends().or(other.into_depends())) }
+
+  pub fn depends(func: &Arc<Function>, inst_ind: usize) -> Type {
+    Type::DependsOn(DependsOn::unit(MorphIndex::weak(func, inst_ind)))
+  }
 
   pub fn into_depends(self) -> DependsOn {
     match self {
@@ -68,6 +72,7 @@ pub enum DependsOn {
 }
 
 impl DependsOn {
+  pub fn func(func: &Arc<Function>, inst_ind: usize) -> DependsOn { DependsOn::unit(MorphIndex::weak(func, inst_ind)) }
   pub fn unit(i: MorphIndex) -> DependsOn { DependsOn::Unit(i) }
   pub fn and(self, i: DependsOn) -> DependsOn { DependsOn::And(Box::new(self), Box::new(i)) }
   pub fn or(self, i: DependsOn) -> DependsOn { DependsOn::Or(Box::new(self), Box::new(i)) }

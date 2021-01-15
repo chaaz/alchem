@@ -16,9 +16,10 @@ const MAX_CONSTANTS: usize = 255;
 const MAX_MONOMORPHS: usize = 20;
 
 pub type Native =
-  for<'r> fn(Vec<Value>, &NativeInfo, &'r mut Runner) -> Pin<Box<dyn Future<Output = Value> + Send + 'r>>;
-pub type TypeNative = fn(Vec<Type>) -> MorphStatus;
+  for<'r> fn(Vec<Value>, NativeInfo, &'r mut Runner) -> Pin<Box<dyn Future<Output = Value> + Send + 'r>>;
+pub type TypeNative = fn(Vec<Type>, &Globals) -> MorphStatus;
 pub type ObjUpvalues = Mutex<Vec<ObjUpvalue>>;
+pub type Globals = HashMap<String, Arc<Function>>;
 
 pub struct Function {
   arity: u8,
@@ -82,6 +83,13 @@ impl Function {
     self.arity
   }
 
+  pub fn find_or_build(self: &Arc<Function>, args: Vec<Type>, globals: &Globals) -> (usize, Option<Type>) {
+    self.find_known_type(&args).unwrap_or_else(|| {
+      let inst_ind = self.reserve_inst(args);
+      (inst_ind, self.replay(inst_ind, globals))
+    })
+  }
+
   pub fn known_type(&self, inst_ind: usize) -> Option<Type> {
     let instances = self.instances.try_lock().unwrap();
     instances[inst_ind].known_type()
@@ -101,7 +109,7 @@ impl Function {
     instances.len() - 1
   }
 
-  pub fn replay_if_ready(self: &Arc<Function>, inst_ind: usize) -> Option<Type> {
+  pub fn replay_if_ready(self: &Arc<Function>, inst_ind: usize, globals: &Globals) -> Option<Type> {
     let (needs_rebuild, build_deps, needs_type, type_deps) = {
       let instances = self.instances.try_lock().unwrap();
       let morph = &instances[inst_ind];
@@ -116,19 +124,23 @@ impl Function {
     };
 
     if (needs_rebuild && build_deps.iter().all(|d| d.is_known())) || (needs_type && type_deps.is_known()) {
-      self.replay(inst_ind)
+      self.replay(inst_ind, globals)
     } else {
       self.known_type(inst_ind)
     }
   }
 
-  pub fn replay(self: &Arc<Function>, inst_ind: usize) -> Option<Type> {
+  pub fn replay(self: &Arc<Function>, inst_ind: usize, globals: &Globals) -> Option<Type> {
     // TODO(later): protect against indeterminate recursive types, by ensuring that the type deps for a function
-    // does not strictly depend on itself or any of its other instances.
+    // does not depend strictly on itself or at all on any of its other instances.
     //
-    // ex. `f = fn(x) { = f({ x: x })  }; = f(1)`
+    // ex. `f = fn(x) { = f({ x: x }) }; = f(1)`
     //
-    // Currently protected via MAX_MONOMORPHS
+    // This maybe relates to the same with return types?
+    //
+    // ex. `f = fn(x) { = { x: f(x) } }; = f(1)`
+    //
+    // Currently (somewhat) protected via MAX_MONOMORPHS
 
     let (args, old_type) = {
       let mut instances = self.instances.try_lock().unwrap();
@@ -138,11 +150,11 @@ impl Function {
     self.unlink_all(inst_ind);
 
     let status = match self.fn_type() {
-      FnType::Native(_, type_fn) => (type_fn)(args),
+      FnType::Native(_, type_fn) => (type_fn)(args, globals),
       FnType::Alchem(pnames, code) => {
         let self_index = MorphIndex::weak(self, inst_ind);
         let code = code.clone().into_iter();
-        let compiler = Compiler::replay(pnames.clone(), args, code, self.known_upvals.clone());
+        let compiler = Compiler::replay(pnames.clone(), args, code, self.known_upvals.clone(), globals);
         let (scope_zero, rtype) = compiler.compile();
 
         match scope_zero.into_mode() {
@@ -174,6 +186,16 @@ impl Function {
         }
       }
     };
+
+    let status = match status {
+      MorphStatus::Known(rtype) if rtype.is_depends() => {
+        let mut instances = self.instances.try_lock().unwrap();
+        let morph = &mut instances[inst_ind];
+        morph.type_dependencies = rtype.into_depends();
+        MorphStatus::Known(Type::Unset)
+      }
+      other => other
+    };
     let new_type = status.known_type();
 
     // Verify that we haven't regressed.
@@ -195,10 +217,10 @@ impl Function {
 
     if let Some((type_deps, build_deps)) = ready_deps {
       for index in type_deps {
-        index.replay_if_ready();
+        index.replay_if_ready(globals);
       }
       for index in build_deps {
-        index.replay_if_ready();
+        index.replay_if_ready(globals);
       }
     }
 
@@ -274,7 +296,7 @@ pub enum MorphStatus {
 impl MorphStatus {
   pub fn known_type(&self) -> Option<Type> {
     match self {
-      Self::Known(t) | Self::Completed(_, t) if t.is_known() => Some(t.clone()),
+      Self::Known(t) | Self::Completed(_, t) | Self::NativeCompleted(_, t) if t.is_known() => Some(t.clone()),
       _ => None
     }
   }
@@ -322,8 +344,8 @@ impl MorphIndex {
 
   pub fn is_known(&self) -> bool { self.operate_morph(|morph| morph.is_known()).unwrap_or(true) }
 
-  fn replay_if_ready(&self) -> Option<Option<Type>> {
-    self.operate_func(|func, inst_ind| func.replay_if_ready(inst_ind))
+  fn replay_if_ready(&self, globals: &Globals) -> Option<Option<Type>> {
+    self.operate_func(|func, inst_ind| func.replay_if_ready(inst_ind, globals))
   }
 
   pub fn add_build_dependency(&self, i: MorphIndex) {
@@ -605,35 +627,6 @@ impl Opcode {
   pub fn initial_jump_if_false() -> Opcode { Self::JumpIfFalse(0) }
   pub fn initial_jump() -> Opcode { Self::Jump(0) }
 }
-
-// convert
-//
-// async fn print(vals: Vec<Value>, runner: &mut Runner) -> Value
-//
-// to
-//
-// fn print<'r>(vals: Vec<Value>, _runner: &'r mut Runner) -> Pin<Box<dyn Future<Output = Value> + Send + 'r>>
-
-#[macro_export]
-macro_rules! native_fn {(
-  $( #[$attr:meta] )* // includes doc strings
-  $pub:vis
-  async
-  fn $fname:ident ($arg1_i:ident : $arg1_t:ty, $arg2_i:ident : &mut $arg2_t:ty) -> $Ret:ty
-  {
-      $($body:tt)*
-  }
-) => (
-  $( #[$attr] )*
-  $pub
-  fn $fname<'r> ($arg1_i : $arg1_t, $arg2_i : &'r mut $arg2_t) -> ::std::pin::Pin<::std::boxed::Box<
-      dyn ::std::future::Future<Output = $Ret>
-          + ::std::marker::Send + 'r
-  >>
-  {
-      ::std::boxed::Box::pin(async move { $($body)* })
-  }
-)}
 
 #[cfg(test)]
 mod test {
