@@ -7,25 +7,25 @@
 
 mod util;
 
-use util::expect_natives;
+use util::expectn;
 
 #[tokio::test]
-async fn fourty_two() { expect_natives("=fourty_two()", 42).await; }
+async fn fourty_two() { expectn("=fourty_two()", 42).await; }
 
 #[tokio::test]
-async fn native_to_alc() { expect_natives("f=fn(){=1}; =recall(f) + 2", 3).await; }
+async fn native_to_alc() { expectn("f=fn(){=1}; =recall(f) + 2", 3).await; }
 
 #[tokio::test]
-async fn alc_to_native() { expect_natives("f=fn(){=fourty_two()}; =f() + 1", 43).await; }
+async fn alc_to_native() { expectn("f=fn(){=fourty_two()}; =f() + 1", 43).await; }
 
 #[tokio::test]
-async fn native_to_native() { expect_natives("=recall(fourty_two) + 1", 43).await; }
+async fn native_to_native() { expectn("=recall(fourty_two) + 1", 43).await; }
 
 #[tokio::test]
-async fn assign_native() { expect_natives("n42 = fourty_two; =n42()", 42).await; }
+async fn assign_native() { expectn("n42 = fourty_two; =n42()", 42).await; }
 
 #[tokio::test]
-async fn full_ffi() { expect_natives("f=fn(){=fourty_two()}; f2=fn(){=recall(f)}; =f2() + 1", 43).await; }
+async fn full_ffi() { expectn("f=fn(){=fourty_two()}; f2=fn(){=recall(f)}; =f2() + 1", 43).await; }
 
 #[tokio::test]
-async fn native_args() { expect_natives("f=fn(a){=a+1}; =recall_1(f, 2)", 3).await; }
+async fn native_args() { expectn("f=fn(a){=a+1}; =recall_1(f, 2)", 3).await; }

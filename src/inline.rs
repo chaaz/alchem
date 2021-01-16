@@ -57,16 +57,6 @@ impl<T> Inline<T> {
     }
   }
 
-  // #[inline]
-  // pub fn append_vec(&mut self, vs: Vec<T>)
-  // where
-  //   T: Clone
-  // {
-  //   for v in vs {
-  //     self.push(v)
-  //   }
-  // }
-
   #[inline]
   pub fn pop(&mut self) -> T {
     unsafe {

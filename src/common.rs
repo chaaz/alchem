@@ -620,7 +620,9 @@ pub enum Opcode {
   CloseUpvalue,
   JumpIfFalse(u16),
   Jump(u16),
-  Call(usize, u8)
+  Call(usize, u8),
+  Object(Vec<usize>),
+  GetIndex(usize)
 }
 
 impl Opcode {

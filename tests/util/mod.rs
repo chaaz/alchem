@@ -6,13 +6,13 @@ use alchem::vm::{Runner, Vm};
 use macro_rules_attribute::macro_rules_attribute;
 
 #[allow(dead_code)]
-pub async fn expect_script<V: Into<Value>>(script: &str, expected: V) {
+pub async fn expect<V: Into<Value>>(script: &str, expected: V) {
   let vm = Vm::new();
   assert_eq!(vm.interpret(script, new_globals()).await, expected.into());
 }
 
 #[allow(dead_code)]
-pub async fn expect_natives<V: Into<Value>>(script: &str, expected: V) {
+pub async fn expectn<V: Into<Value>>(script: &str, expected: V) {
   let vm = Vm::new();
 
   let mut globals = new_globals();

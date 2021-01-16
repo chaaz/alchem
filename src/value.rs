@@ -22,6 +22,7 @@ pub enum Value {
   Int(i32),
   Bool(bool),
   String(Arc<str>),
+  Array(Vec<Value>),
   Closure(Arc<Closure>),
   Native(Arc<FuncNative>),
   Void
@@ -36,6 +37,7 @@ impl PartialEq for Value {
       (Self::String(v1), Self::String(v2)) => v1 == v2,
       (Self::Closure(v1), Self::Closure(v2)) => Arc::ptr_eq(v1, v2),
       (Self::Native(v1), Self::Native(v2)) => Arc::ptr_eq(v1, v2),
+      (Self::Array(v1), Self::Array(v2)) => v1 == v2,
       (Self::Void, Self::Void) => true,
       _ => false
     }
@@ -51,6 +53,7 @@ impl fmt::Debug for Value {
       Self::String(v) => write!(f, "\"{}\"", v),
       Self::Closure(v) => write!(f, "{:?}", v),
       Self::Native(v) => write!(f, "{:?}", v),
+      Self::Array(_) => write!(f, "(array)"),
       Self::Void => write!(f, "(void)")
     }
   }
@@ -101,6 +104,13 @@ impl Value {
     }
   }
 
+  pub fn as_array_mut(&mut self) -> &mut Vec<Value> {
+    match self {
+      Self::Array(v) => v,
+      _ => panic!("Not an array.")
+    }
+  }
+
   pub fn as_closure(&self) -> Arc<Closure> {
     match self {
       Self::Closure(v) => v.clone(),
@@ -118,6 +128,7 @@ impl Value {
       Self::String(v) => Self::String(v.clone()),
       Self::Closure(v) => Self::Closure(v.clone()),
       Self::Native(v) => Self::Native(v.clone()),
+      Self::Array(v) => Self::Array(v.iter_mut().map(|v| v.shift()).collect()),
       Self::Void => panic!("Cannot access an evaculated value.")
     }
   }

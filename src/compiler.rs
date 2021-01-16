@@ -5,7 +5,7 @@ use crate::common::{Function, Globals, MorphIndex, Opcode, Upval};
 use crate::errors::Error;
 use crate::scanner::{Scanner, Token, TokenType, TokenTypeDiscr};
 use crate::scope::{Jump, ScopeLater, ScopeOne, ScopeStack, ScopeZero};
-use crate::types::{DependsOn, Type};
+use crate::types::{DependsOn, Type, Object};
 use crate::value::Declared;
 use lazy_static::lazy_static;
 use std::collections::HashMap;
@@ -215,6 +215,43 @@ impl<'g> Compiler<'g> {
   }
 
   fn expression(&mut self) -> Type { self.parse_precendence(Precedence::Or) }
+
+  fn object(&mut self) -> Type {
+    let mut object = Object::new();
+    let mut stack_order = Vec::new();
+
+    let mut separated = true;
+    while self.current_ttd() != TokenTypeDiscr::CloseCurl {
+      if object.len() >= 255 {
+        panic!("More than 255 object members.");
+      }
+      if !separated {
+        panic!("Missing comma after argument.");
+      }
+
+      self.consume(TokenTypeDiscr::Identifier);
+      let name = if let TokenType::Identifier(s) = self.previous.token_type() {
+        s.to_string()
+      } else {
+        panic!("Unexpected token for object: {:?}", self.previous)
+      };
+      self.consume(TokenTypeDiscr::Colon);
+      let t = self.expression();
+      object.add(name.clone(), t);
+      stack_order.push(name);
+
+      separated = false;
+      if self.current_ttd() == TokenTypeDiscr::Comma {
+        self.consume(TokenTypeDiscr::Comma);
+        separated = true;
+      }
+    }
+    self.consume(TokenTypeDiscr::CloseCurl);
+
+    let order = stack_order.iter().map(|n| object.index_of(n).unwrap()).collect();
+    self.emit_instr(Opcode::Object(order));
+    Type::Object(Arc::new(object))
+  }
 
   fn literal(&mut self) -> Type {
     // `self.emit_value(to_value::<$t>($v)?)` doesn't work because of
@@ -432,6 +469,22 @@ impl<'g> Compiler<'g> {
     outtype
   }
 
+  fn dot(&mut self, ltype: &Type) -> Type {
+    self.consume(TokenTypeDiscr::Identifier);
+    let name = if let TokenType::Identifier(s) = self.previous.token_type() {
+      s.to_string()
+    } else {
+      panic!("Unexpected token for object: {:?}", self.previous)
+    };
+
+    if let Some(ind) = ltype.as_object().index_of(&name) {
+      self.emit_instr(Opcode::GetIndex(ind));
+      ltype.as_object().get(&name).clone()
+    } else {
+      panic!("No such index for {}.", name);
+    }
+  }
+
   fn binary(&mut self, ltype: &Type) -> Type {
     let ttd = self.previous_ttd();
     let precedence = self.get_rule(ttd).precedence().up();
@@ -567,10 +620,12 @@ impl<'g> Compiler<'g> {
 fn variable(compiler: &mut Compiler) -> Type { compiler.variable() }
 fn unary(compiler: &mut Compiler) -> Type { compiler.unary() }
 fn literal(compiler: &mut Compiler) -> Type { compiler.literal() }
+fn object(compiler: &mut Compiler) -> Type { compiler.object() }
 fn grouping(compiler: &mut Compiler) -> Type { compiler.grouping() }
 fn if_block(compiler: &mut Compiler) -> Type { compiler.if_block() }
 fn fn_sync(compiler: &mut Compiler) -> Type { compiler.fn_sync() }
 fn binary(compiler: &mut Compiler, intype: &Type) -> Type { compiler.binary(intype) }
+fn dot(compiler: &mut Compiler, intype: &Type) -> Type { compiler.dot(intype) }
 fn and(compiler: &mut Compiler, intype: &Type) -> Type { compiler.and(intype) }
 fn or(compiler: &mut Compiler, intype: &Type) -> Type { compiler.or(intype) }
 fn call(compiler: &mut Compiler, intype: &Type) -> Type { compiler.call(intype) }
@@ -651,7 +706,7 @@ fn construct_rules() -> HashMap<TokenTypeDiscr, Rule> {
   rules.insert(TokenTypeDiscr::Equals, Rule::new(None, None, Precedence::None));
   rules.insert(TokenTypeDiscr::Semi, Rule::new(None, None, Precedence::None));
   rules.insert(TokenTypeDiscr::Colon, Rule::new(None, None, Precedence::None));
-  rules.insert(TokenTypeDiscr::OpenCurl, Rule::new(None, None, Precedence::None));
+  rules.insert(TokenTypeDiscr::OpenCurl, Rule::new(Some(object), None, Precedence::None));
   rules.insert(TokenTypeDiscr::CloseCurl, Rule::new(None, None, Precedence::None));
   rules.insert(TokenTypeDiscr::OpenSquare, Rule::new(None, None, Precedence::None));
   rules.insert(TokenTypeDiscr::CloseSquare, Rule::new(None, None, Precedence::None));
@@ -671,7 +726,7 @@ fn construct_rules() -> HashMap<TokenTypeDiscr, Rule> {
   rules.insert(TokenTypeDiscr::Bang, Rule::new(Some(unary), None, Precedence::Unary));
   rules.insert(TokenTypeDiscr::OpenParen, Rule::new(Some(grouping), Some(call), Precedence::Call));
   rules.insert(TokenTypeDiscr::CloseParen, Rule::new(None, None, Precedence::None));
-  rules.insert(TokenTypeDiscr::Dot, Rule::new(None, Some(binary), Precedence::Call));
+  rules.insert(TokenTypeDiscr::Dot, Rule::new(None, Some(dot), Precedence::Call));
   rules.insert(TokenTypeDiscr::FnWord, Rule::new(Some(fn_sync), None, Precedence::None));
   rules.insert(TokenTypeDiscr::IfWord, Rule::new(Some(if_block), None, Precedence::None));
   rules.insert(TokenTypeDiscr::ElseifWord, Rule::new(None, None, Precedence::None));

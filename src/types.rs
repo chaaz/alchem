@@ -4,12 +4,45 @@ use crate::common::{Function, MorphIndex};
 use crate::either::IterEither3::{A, B, C};
 use std::iter::{empty, once};
 use std::sync::{Arc, Weak};
+use std::collections::HashMap;
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct Object {
+  types: HashMap<String, Type>,
+  indexes: Vec<String>
+}
+
+impl Default for Object {
+  fn default() -> Self { Object::new() }
+}
+
+impl Object {
+  pub fn new() -> Object { Object { types: HashMap::new(), indexes: Vec::new() } }
+  pub fn types(&self) -> &HashMap<String, Type> { &self.types }
+  pub fn indexes(&self) -> &[String] { &self.indexes }
+  pub fn index_of(&self, key: &str) -> Option<usize> { self.indexes.iter().position(|k| k == key) }
+  pub fn get(&self, key: &str) -> &Type { self.types.get(key).unwrap() }
+  pub fn len(&self) -> usize { self.indexes.len() }
+
+  pub fn set(&mut self, types: HashMap<String, Type>) {
+    self.indexes = types.keys().cloned().collect();
+    self.indexes.sort();
+    self.types = types;
+  }
+
+  pub fn add(&mut self, key: String, t: Type) {
+    self.types.insert(key, t);
+    self.indexes = self.types.keys().cloned().collect();
+    self.indexes.sort();
+  }
+}
 
 #[derive(Clone, Debug)]
 pub enum Type {
   Int,
   Bool,
   String,
+  Object(Arc<Object>),
   FnSync(Weak<Function>), // Weak, so that we can collapse functions later.
   Unset,
   DependsOn(DependsOn)
@@ -23,6 +56,7 @@ impl PartialEq for Type {
       (Self::String, Self::String) => true,
       (Self::FnSync(a), Self::FnSync(b)) => Weak::ptr_eq(a, b),
       (Self::Unset, Self::Unset) => true,
+      (Self::Object(a), Self::Object(b)) => a == b,
       _ => false
     }
   }
@@ -59,6 +93,13 @@ impl Type {
     match self {
       Self::FnSync(f) => f.clone(),
       _ => panic!("Type is not a function.")
+    }
+  }
+
+  pub fn as_object(&self) -> &Object {
+    match self {
+      Self::Object(o) => o,
+      _ => panic!("Type is not an object.")
     }
   }
 }

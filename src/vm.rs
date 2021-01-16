@@ -245,6 +245,24 @@ fn handle_op(
       open_upvals.close_gte(index, stack);
       stack.drop();
     }
+    Opcode::Object(inds) => {
+      let stack_len = stack.len();
+      let inds_len = inds.len();
+      let mut parts = Vec::new();
+      for _ in 0 .. inds_len {
+        parts.push(Value::Int(0));
+      }
+      for (i, ind) in inds.iter().enumerate() {
+        parts[*ind] = stack[stack_len - (inds_len - i)].shift();
+      }
+
+      stack[stack_len - inds_len] = Value::Array(parts);
+      stack.truncate(stack_len - (inds_len - 1));
+    }
+    Opcode::GetIndex(ind) => {
+      let stack_len = stack.len();
+      stack[stack_len - 1] = stack[stack_len - 1].as_array_mut()[*ind].shift();
+    }
   }
 
   Handled::None
