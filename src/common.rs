@@ -622,6 +622,7 @@ pub enum Opcode {
   Jump(u16),
   Call(usize, u8),
   Object(Vec<usize>),
+  Array(usize),
   GetIndex(usize)
 }
 

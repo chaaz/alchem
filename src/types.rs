@@ -7,6 +7,23 @@ use std::sync::{Arc, Weak};
 use std::collections::HashMap;
 
 #[derive(Debug, PartialEq, Eq)]
+pub struct Array {
+  types: Vec<Type>,
+}
+
+impl Default for Array {
+  fn default() -> Self { Array::new() }
+}
+
+impl Array {
+  pub fn new() -> Array { Array { types: Vec::new() } }
+  pub fn types(&self) -> &[Type] { &self.types }
+  pub fn get(&self, ind: usize) -> &Type { self.types.get(ind).unwrap() }
+  pub fn len(&self) -> usize { self.types.len() }
+  pub fn add(&mut self, t: Type) { self.types.push(t); }
+}
+
+#[derive(Debug, PartialEq, Eq)]
 pub struct Object {
   types: HashMap<String, Type>,
   indexes: Vec<String>
@@ -24,12 +41,6 @@ impl Object {
   pub fn get(&self, key: &str) -> &Type { self.types.get(key).unwrap() }
   pub fn len(&self) -> usize { self.indexes.len() }
 
-  pub fn set(&mut self, types: HashMap<String, Type>) {
-    self.indexes = types.keys().cloned().collect();
-    self.indexes.sort();
-    self.types = types;
-  }
-
   pub fn add(&mut self, key: String, t: Type) {
     self.types.insert(key, t);
     self.indexes = self.types.keys().cloned().collect();
@@ -43,6 +54,7 @@ pub enum Type {
   Bool,
   String,
   Object(Arc<Object>),
+  Array(Arc<Array>),
   FnSync(Weak<Function>), // Weak, so that we can collapse functions later.
   Unset,
   DependsOn(DependsOn)
@@ -57,6 +69,7 @@ impl PartialEq for Type {
       (Self::FnSync(a), Self::FnSync(b)) => Weak::ptr_eq(a, b),
       (Self::Unset, Self::Unset) => true,
       (Self::Object(a), Self::Object(b)) => a == b,
+      (Self::Array(a), Self::Array(b)) => a == b,
       _ => false
     }
   }
@@ -93,6 +106,13 @@ impl Type {
     match self {
       Self::FnSync(f) => f.clone(),
       _ => panic!("Type is not a function.")
+    }
+  }
+
+  pub fn as_array(&self) -> &Array {
+    match self {
+      Self::Array(a) => a,
+      _ => panic!("Type is not an array.")
     }
   }
 

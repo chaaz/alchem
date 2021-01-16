@@ -245,6 +245,15 @@ fn handle_op(
       open_upvals.close_gte(index, stack);
       stack.drop();
     }
+    Opcode::Array(len) => {
+      let stack_len = stack.len();
+      let mut parts = Vec::new();
+      for i in 0 .. *len {
+        parts.push(stack[stack_len - (len - i)].shift());
+      }
+      stack[stack_len - len] = Value::Array(parts);
+      stack.truncate(stack_len - (len - 1));
+    }
     Opcode::Object(inds) => {
       let stack_len = stack.len();
       let inds_len = inds.len();

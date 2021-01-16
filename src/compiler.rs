@@ -5,7 +5,7 @@ use crate::common::{Function, Globals, MorphIndex, Opcode, Upval};
 use crate::errors::Error;
 use crate::scanner::{Scanner, Token, TokenType, TokenTypeDiscr};
 use crate::scope::{Jump, ScopeLater, ScopeOne, ScopeStack, ScopeZero};
-use crate::types::{DependsOn, Type, Object};
+use crate::types::{DependsOn, Type, Object, Array};
 use crate::value::Declared;
 use lazy_static::lazy_static;
 use std::collections::HashMap;
@@ -215,6 +215,33 @@ impl<'g> Compiler<'g> {
   }
 
   fn expression(&mut self) -> Type { self.parse_precendence(Precedence::Or) }
+
+  fn array(&mut self) -> Type {
+    let mut array = Array::new();
+
+    let mut separated = true;
+    while self.current_ttd() != TokenTypeDiscr::CloseSquare {
+      if array.len() >= 255 {
+        panic!("More than 255 array members.");
+      }
+      if !separated {
+        panic!("Missing comma after argument.");
+      }
+
+      let t = self.expression();
+      array.add(t);
+
+      separated = false;
+      if self.current_ttd() == TokenTypeDiscr::Comma {
+        self.consume(TokenTypeDiscr::Comma);
+        separated = true;
+      }
+    }
+    self.consume(TokenTypeDiscr::CloseSquare);
+
+    self.emit_instr(Opcode::Array(array.len()));
+    Type::Array(Arc::new(array))
+  }
 
   fn object(&mut self) -> Type {
     let mut object = Object::new();
@@ -470,18 +497,20 @@ impl<'g> Compiler<'g> {
   }
 
   fn dot(&mut self, ltype: &Type) -> Type {
-    self.consume(TokenTypeDiscr::Identifier);
-    let name = if let TokenType::Identifier(s) = self.previous.token_type() {
-      s.to_string()
-    } else {
-      panic!("Unexpected token for object: {:?}", self.previous)
-    };
-
-    if let Some(ind) = ltype.as_object().index_of(&name) {
-      self.emit_instr(Opcode::GetIndex(ind));
-      ltype.as_object().get(&name).clone()
-    } else {
-      panic!("No such index for {}.", name);
+    self.advance();
+    match self.previous.token_type() {
+      TokenType::Identifier(s) => {
+        let name = s.to_string();
+        let ind = ltype.as_object().index_of(&name).unwrap_or_else(|| panic!("No such index for \"{}\".", name));
+        self.emit_instr(Opcode::GetIndex(ind));
+        ltype.as_object().get(&name).clone()
+      }
+      TokenType::IntLit(s) => {
+        let ind = s.parse().unwrap();
+        self.emit_instr(Opcode::GetIndex(ind));
+        ltype.as_array().get(ind).clone()
+      }
+      other => panic!("Unknown dot argument {:?}.", other)
     }
   }
 
@@ -620,6 +649,7 @@ impl<'g> Compiler<'g> {
 fn variable(compiler: &mut Compiler) -> Type { compiler.variable() }
 fn unary(compiler: &mut Compiler) -> Type { compiler.unary() }
 fn literal(compiler: &mut Compiler) -> Type { compiler.literal() }
+fn array(compiler: &mut Compiler) -> Type { compiler.array() }
 fn object(compiler: &mut Compiler) -> Type { compiler.object() }
 fn grouping(compiler: &mut Compiler) -> Type { compiler.grouping() }
 fn if_block(compiler: &mut Compiler) -> Type { compiler.if_block() }
@@ -708,7 +738,7 @@ fn construct_rules() -> HashMap<TokenTypeDiscr, Rule> {
   rules.insert(TokenTypeDiscr::Colon, Rule::new(None, None, Precedence::None));
   rules.insert(TokenTypeDiscr::OpenCurl, Rule::new(Some(object), None, Precedence::None));
   rules.insert(TokenTypeDiscr::CloseCurl, Rule::new(None, None, Precedence::None));
-  rules.insert(TokenTypeDiscr::OpenSquare, Rule::new(None, None, Precedence::None));
+  rules.insert(TokenTypeDiscr::OpenSquare, Rule::new(Some(array), None, Precedence::None));
   rules.insert(TokenTypeDiscr::CloseSquare, Rule::new(None, None, Precedence::None));
   rules.insert(TokenTypeDiscr::DoubleAnd, Rule::new(None, Some(and), Precedence::And));
   rules.insert(TokenTypeDiscr::DoubleOr, Rule::new(None, Some(or), Precedence::Or));

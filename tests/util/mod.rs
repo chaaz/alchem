@@ -64,7 +64,6 @@ async fn ntv_recall(vals: Vec<Value>, info: NativeInfo, runner: &mut Runner) -> 
 }
 
 fn ntvt_recall_1(args: Vec<Type>, globals: &Globals) -> MorphStatus {
-  assert_eq!(args.len(), 2);
   let mut args = args.into_iter();
   let func = args.next().unwrap().as_function().upgrade().unwrap();
   assert_eq!(func.arity(), 1);
