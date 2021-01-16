@@ -11,6 +11,10 @@ async fn simple_int() { expect("=1", 1).await; }
 async fn simple_float() { expect("=1.1", 1.1).await; }
 
 #[tokio::test]
+#[should_panic]
+async fn wrong_float() { expect("=1.1.1", 1.1).await; }
+
+#[tokio::test]
 async fn simple_string() { expect(r#"="hello""#, "hello").await; }
 
 #[tokio::test]

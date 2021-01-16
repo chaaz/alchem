@@ -291,8 +291,8 @@ impl<'g> Compiler<'g> {
     }
 
     match self.previous.token_type() {
-      TokenType::IntLit(v) => emit_value!(v, i32, Type::Int),
-      TokenType::FloatLit(v) => emit_value!(v, f64, Type::Int),
+      TokenType::IntLit(v) => emit_value!(v, i32, Type::Number),
+      TokenType::FloatLit(v) => emit_value!(v, f64, Type::Number),
       TokenType::StringLit(v) => emit_value!(v, String, Type::String),
       TokenType::TrueLit => self.emit_value(Declared::Bool(true), Type::Bool),
       TokenType::FalseLit => self.emit_value(Declared::Bool(false), Type::Bool),
@@ -484,7 +484,7 @@ impl<'g> Compiler<'g> {
 
     match ttd {
       TokenTypeDiscr::Minus => {
-        assert!(!outtype.is_known() || outtype == Type::Int);
+        assert!(!outtype.is_known() || outtype == Type::Number);
         self.emit_instr(Opcode::Negate);
       }
       TokenTypeDiscr::Bang => {
@@ -514,6 +514,19 @@ impl<'g> Compiler<'g> {
     }
   }
 
+  fn indot(&mut self, intype: &Type) -> Type {
+    self.advance();
+    match self.previous.token_type() {
+      TokenType::IntLit(s) => {
+        let ind = s.parse().unwrap();
+        self.emit_instr(Opcode::GetIndex(ind));
+        self.consume(TokenTypeDiscr::CloseSquare);
+        intype.as_array().get(ind).clone()
+      }
+      other => panic!("Index must be a literal integer, not {:?}.", other)
+    }
+  }
+
   fn binary(&mut self, ltype: &Type) -> Type {
     let ttd = self.previous_ttd();
     let precedence = self.get_rule(ttd).precedence().up();
@@ -537,13 +550,13 @@ impl<'g> Compiler<'g> {
       | TokenTypeDiscr::Lt
       | TokenTypeDiscr::Gte
       | TokenTypeDiscr::Lte => {
-        assert!(!ltype.is_known() || ltype == &Type::Int)
+        assert!(!ltype.is_known() || ltype == &Type::Number)
       }
       TokenTypeDiscr::Plus => {
-        assert!(!ltype.is_known() || ltype == &Type::Int || ltype == &Type::String)
+        assert!(!ltype.is_known() || ltype == &Type::Number || ltype == &Type::String)
       }
       TokenTypeDiscr::DoubleEq | TokenTypeDiscr::NotEq => {
-        assert!(!ltype.is_known() || ltype == &Type::Int || ltype == &Type::String || ltype == &Type::Bool)
+        assert!(!ltype.is_known() || ltype == &Type::Number || ltype == &Type::String || ltype == &Type::Bool)
       }
       _ => ()
     }
@@ -655,6 +668,7 @@ fn grouping(compiler: &mut Compiler) -> Type { compiler.grouping() }
 fn if_block(compiler: &mut Compiler) -> Type { compiler.if_block() }
 fn fn_sync(compiler: &mut Compiler) -> Type { compiler.fn_sync() }
 fn binary(compiler: &mut Compiler, intype: &Type) -> Type { compiler.binary(intype) }
+fn indot(compiler: &mut Compiler, intype: &Type) -> Type { compiler.indot(intype) }
 fn dot(compiler: &mut Compiler, intype: &Type) -> Type { compiler.dot(intype) }
 fn and(compiler: &mut Compiler, intype: &Type) -> Type { compiler.and(intype) }
 fn or(compiler: &mut Compiler, intype: &Type) -> Type { compiler.or(intype) }
@@ -738,7 +752,7 @@ fn construct_rules() -> HashMap<TokenTypeDiscr, Rule> {
   rules.insert(TokenTypeDiscr::Colon, Rule::new(None, None, Precedence::None));
   rules.insert(TokenTypeDiscr::OpenCurl, Rule::new(Some(object), None, Precedence::None));
   rules.insert(TokenTypeDiscr::CloseCurl, Rule::new(None, None, Precedence::None));
-  rules.insert(TokenTypeDiscr::OpenSquare, Rule::new(Some(array), None, Precedence::None));
+  rules.insert(TokenTypeDiscr::OpenSquare, Rule::new(Some(array), Some(indot), Precedence::Call));
   rules.insert(TokenTypeDiscr::CloseSquare, Rule::new(None, None, Precedence::None));
   rules.insert(TokenTypeDiscr::DoubleAnd, Rule::new(None, Some(and), Precedence::And));
   rules.insert(TokenTypeDiscr::DoubleOr, Rule::new(None, Some(or), Precedence::Or));

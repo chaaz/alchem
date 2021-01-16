@@ -4,6 +4,7 @@ use std::str::CharIndices;
 use std::vec::IntoIter;
 
 pub struct Scanner<'s> {
+  was_dot: bool,
   input: &'s str,
   iter: CharIndices<'s>,
   _start: usize,
@@ -11,7 +12,9 @@ pub struct Scanner<'s> {
 }
 
 impl<'s> Scanner<'s> {
-  pub fn new(input: &'s str) -> Scanner { Scanner { input, iter: input.char_indices(), _start: 0, line: 1 } }
+  pub fn new(input: &'s str) -> Scanner {
+    Scanner { input, iter: input.char_indices(), _start: 0, line: 1, was_dot: false }
+  }
 }
 
 impl<'s> Iterator for Scanner<'s> {
@@ -47,6 +50,7 @@ impl<'s> Iterator for Scanner<'s> {
         c if c.is_ascii_alphabetic() || c == '_' => self.next_identifier(st),
         _ => TokenType::Error(format!("Unexpected character at {}.", st))
       };
+      self.was_dot = token_type == TokenType::Dot;
 
       Token::new(token_type, self.line)
     })
@@ -88,6 +92,9 @@ impl<'s> Scanner<'s> {
       if !c.is_digit(10) && c != '.' {
         break;
       } else if c == '.' {
+        if self.was_dot {
+          break;
+        }
         if !is_int {
           return TokenType::Error(format!("Illegal number at {}.", open));
         }

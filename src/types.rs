@@ -50,7 +50,7 @@ impl Object {
 
 #[derive(Clone, Debug)]
 pub enum Type {
-  Int,
+  Number,
   Bool,
   String,
   Object(Arc<Object>),
@@ -63,7 +63,7 @@ pub enum Type {
 impl PartialEq for Type {
   fn eq(&self, other: &Self) -> bool {
     match (self, other) {
-      (Self::Int, Self::Int) => true,
+      (Self::Number, Self::Number) => true,
       (Self::Bool, Self::Bool) => true,
       (Self::String, Self::String) => true,
       (Self::FnSync(a), Self::FnSync(b)) => Weak::ptr_eq(a, b),
@@ -112,14 +112,14 @@ impl Type {
   pub fn as_array(&self) -> &Array {
     match self {
       Self::Array(a) => a,
-      _ => panic!("Type is not an array.")
+      other => panic!("Type {:?} is not an array.", other)
     }
   }
 
   pub fn as_object(&self) -> &Object {
     match self {
       Self::Object(o) => o,
-      _ => panic!("Type is not an object.")
+      other => panic!("Type {:?} is not an object.", other)
     }
   }
 }

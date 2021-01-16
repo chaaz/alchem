@@ -51,7 +51,7 @@ async fn run_file(input: &str) -> Result<()> {
 
 fn ntvt_print(_args: Vec<Type>, _globals: &Globals) -> MorphStatus {
   let info = NativeInfo::new();
-  MorphStatus::NativeCompleted(info, Type::Int)
+  MorphStatus::NativeCompleted(info, Type::Number)
 }
 
 #[macro_rules_attribute(native_fn!)]
@@ -60,7 +60,9 @@ async fn ntv_print(vals: Vec<Value>, _info: NativeInfo, _runner: &mut Runner) ->
   Value::Int(1)
 }
 
-fn ntvt_number(_: Vec<Type>, _: &Globals) -> MorphStatus { MorphStatus::NativeCompleted(NativeInfo::new(), Type::Int) }
+fn ntvt_number(_: Vec<Type>, _: &Globals) -> MorphStatus {
+  MorphStatus::NativeCompleted(NativeInfo::new(), Type::Number)
+}
 
 #[macro_rules_attribute(native_fn!)]
 async fn ntv_number(_argv: Vec<Value>, _info: NativeInfo, _runner: &mut Runner) -> Value { Value::Int(42) }
