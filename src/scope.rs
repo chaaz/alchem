@@ -193,7 +193,6 @@ impl ScopeStack {
   }
 
   pub fn pop_scope_zero(self) -> ScopeZero { self.zero }
-
   pub fn add_local(&mut self, name: String) { self.locals_mut().add_local(Local::new(name)); }
 
   pub fn resolve_local_at(&self, scope_ind: usize, name: &str) -> Option<(usize, Type)> {
@@ -201,8 +200,8 @@ impl ScopeStack {
   }
 
   pub fn resolve_local(&self, name: &str) -> Option<(usize, Type)> { self.locals().resolve_local(name) }
-
-  pub fn mark_initialized(&mut self, vtype: Type) { self.locals_mut().mark_last_initialized(vtype); }
+  pub fn mark_last_initialized(&mut self, vtype: Type) { self.locals_mut().mark_last_initialized(vtype); }
+  pub fn mark_initialized(&mut self, ind: usize, vtype: Type) { self.locals_mut().mark_initialized(ind, vtype); }
 
   fn set_captured_at(&mut self, scope_ind: usize, locals_ind: usize, captured: bool) {
     self.locals_at_mut(scope_ind).set_captured(locals_ind, captured);
@@ -440,10 +439,15 @@ impl Locals {
     }
   }
 
-  pub fn mark_last_initialized(&mut self, utype: Type) {
-    let local = self.locals.last_mut().unwrap();
+  pub fn mark_initialized(&mut self, neg_ind: usize, utype: Type) {
+    let locals_len = self.locals.len();
+    let local = &mut self.locals[locals_len - neg_ind];
     local.depth = self.scope_depth;
     local.local_type = utype;
+  }
+
+  pub fn mark_last_initialized(&mut self, utype: Type) {
+    self.mark_initialized(1, utype);
   }
 
   pub fn initialized(&self, index: usize) -> bool {

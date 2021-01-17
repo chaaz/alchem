@@ -623,12 +623,43 @@ pub enum Opcode {
   Call(usize, u8),
   Object(Vec<usize>),
   Array(usize),
-  GetIndex(usize)
+  GetIndex(usize),
+  Extract(Extraction)
 }
 
 impl Opcode {
   pub fn initial_jump_if_false() -> Opcode { Self::JumpIfFalse(0) }
   pub fn initial_jump() -> Opcode { Self::Jump(0) }
+}
+
+#[derive(Debug)]
+pub struct Extraction {
+  parts: Vec<ExtractionPart>,
+}
+
+impl Extraction {
+  pub fn single(part: ExtractionPart) -> Extraction { Extraction { parts: vec![part] } }
+  pub fn from_parts(parts: Vec<ExtractionPart>) -> Extraction { Extraction { parts } }
+  pub fn into_parts(self) -> Vec<ExtractionPart> { self.parts }
+  pub fn idents_len(&self) -> usize { self.parts.len() }
+  pub fn parts(&self) -> &[ExtractionPart] { &self.parts }
+}
+
+#[derive(Debug)]
+pub struct ExtractionPart {
+  inds: Vec<usize>
+}
+
+impl ExtractionPart {
+  pub fn empty() -> ExtractionPart { ExtractionPart { inds: Vec::new() } }
+
+  pub fn push(&self, i: usize) -> ExtractionPart {
+    let mut v = self.inds.clone();
+    v.push(i);
+    ExtractionPart { inds: v }
+  }
+
+  pub fn inds(&self) -> &[usize] { &self.inds }
 }
 
 #[cfg(test)]

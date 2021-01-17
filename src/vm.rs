@@ -272,6 +272,16 @@ fn handle_op(
       let stack_len = stack.len();
       stack[stack_len - 1] = stack[stack_len - 1].as_array_mut()[*ind].shift();
     }
+    Opcode::Extract(extn) => {
+      let mut arr = stack.pop();
+      for part in extn.parts() {
+        let mut target = &mut arr;
+        for ind in part.inds() {
+          target = target.as_array_mut().get_mut(*ind).unwrap();
+        }
+        stack.push(target.shift());
+      }
+    }
   }
 
   Handled::None

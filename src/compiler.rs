@@ -1,7 +1,7 @@
 //! The alchem compiler.
 
 use crate::collapsed::collapse_function;
-use crate::common::{Function, Globals, MorphIndex, Opcode, Upval};
+use crate::common::{Function, Globals, MorphIndex, Opcode, Upval, Extraction, ExtractionPart};
 use crate::errors::Error;
 use crate::scanner::{Scanner, Token, TokenType, TokenTypeDiscr};
 use crate::scope::{Jump, ScopeLater, ScopeOne, ScopeStack, ScopeZero};
@@ -79,7 +79,7 @@ impl<'g> Compiler<'g> {
     assert_eq!(pnames.len(), args.len());
     for (p, a) in pnames.into_iter().zip(args.into_iter()) {
       compiler.declare_variable(p);
-      compiler.mark_initialized(a);
+      compiler.mark_last_initialized(a);
     }
 
     compiler
@@ -185,14 +185,141 @@ impl<'g> Compiler<'g> {
   }
 
   fn assignment(&mut self) {
-    if self.token_check(TokenTypeDiscr::Identifier) {
-      let _name = self.parse_variable();
-      self.consume(TokenTypeDiscr::Equals);
-      let vtype = self.expression();
-      self.consume(TokenTypeDiscr::Semi);
-      self.mark_initialized(vtype);
-    } else {
-      panic!("Unexpected assignment token {:?}", self.current)
+    match self.current_ttd() {
+      TokenTypeDiscr::Identifier => {
+        let _name = self.parse_variable();
+        self.consume(TokenTypeDiscr::Equals);
+        let vtype = self.expression();
+        self.consume(TokenTypeDiscr::Semi);
+        self.mark_last_initialized(vtype);
+      }
+      TokenTypeDiscr::OpenSquare | TokenTypeDiscr::OpenCurl => {
+        let destruct = self.destructure();
+        self.consume(TokenTypeDiscr::Equals);
+        let vtype = self.expression();
+        self.consume(TokenTypeDiscr::Semi);
+        let idents_len = destruct.idents_len();
+        let (c, extraction) = self.extract(&destruct, vtype, idents_len, ExtractionPart::empty());
+        assert_eq!(c, idents_len);
+        assert_eq!(extraction.idents_len(), idents_len);
+        self.emit_instr(Opcode::Extract(extraction))
+      }
+      other => panic!("Unexpected assignment token {:?}", other)
+    }
+  }
+
+  fn destructure(&mut self) -> Destructure {
+    match self.current_ttd() {
+      TokenTypeDiscr::Identifier => {
+        self.advance();
+        if let TokenType::Identifier(s) = self.previous.token_type() {
+          let s = s.to_string();
+          self.declare_variable(s.clone());
+          Destructure::Ident(s)
+        } else {
+          panic!("Should have been ident during destructure.");
+        }
+      }
+      TokenTypeDiscr::OpenSquare => {
+        self.advance();
+        let mut d = Vec::new();
+        let mut separated = true;
+        while self.current_ttd() != TokenTypeDiscr::CloseSquare {
+          if d.len() >= 255 {
+            panic!("More than 255 array destructures.");
+          }
+          if !separated {
+            panic!("Missing comma after array destructure.");
+          }
+
+          d.push(self.destructure());
+
+          separated = false;
+          if self.current_ttd() == TokenTypeDiscr::Comma {
+            self.consume(TokenTypeDiscr::Comma);
+            separated = true;
+          }
+        }
+        self.consume(TokenTypeDiscr::CloseSquare);
+        Destructure::Array(d)
+      }
+      TokenTypeDiscr::OpenCurl => {
+        self.advance();
+        let mut d = HashMap::new();
+        let mut ord = Vec::new();
+        let mut separated = true;
+        while self.current_ttd() != TokenTypeDiscr::CloseCurl {
+          if d.len() >= 255 {
+            panic!("More than 255 object destructure.");
+          }
+          if !separated {
+            panic!("Missing comma after object destructure.");
+          }
+
+          self.consume(TokenTypeDiscr::Identifier);
+          let name = if let TokenType::Identifier(s) = self.previous.token_type() {
+            s.to_string()
+          } else {
+            panic!("Unexpected token for object: {:?}", self.previous)
+          };
+          match self.current_ttd() {
+            TokenTypeDiscr::Colon => {
+              self.advance();
+              let sub = self.destructure();
+              d.insert(name.clone(), sub);
+              ord.push(name);
+            }
+            TokenTypeDiscr::Comma | TokenTypeDiscr::CloseCurl => {
+              let key = name.clone();
+              self.declare_variable(name.clone());
+              let sub = Destructure::Ident(name.clone());
+              d.insert(key, sub);
+              ord.push(name);
+            }
+            other => panic!("Bad follow token for map item: {:?}", other)
+          }
+
+          separated = false;
+          if self.current_ttd() == TokenTypeDiscr::Comma {
+            self.consume(TokenTypeDiscr::Comma);
+            separated = true;
+          }
+        }
+        self.consume(TokenTypeDiscr::CloseCurl);
+        Destructure::Object(d, ord)
+      }
+      other => panic!("Unexpected token to extract: {:?}", other)
+    }
+  }
+
+  fn extract(&mut self, destruct: &Destructure, dtype: Type, at: usize, extr: ExtractionPart) -> (usize, Extraction) {
+    match destruct {
+      Destructure::Ident(_) => {
+        self.mark_initialized(at, dtype);
+        (1, Extraction::single(extr))
+      }
+      Destructure::Array(v) => {
+        let mut total = 0;
+        let parts = v.iter().enumerate().flat_map(|(i, d)| {
+          let sub_type = dtype.as_array().get(i).clone();
+          let (counted, ex) = self.extract(d, sub_type, at - total, extr.push(i));
+          total += counted;
+          ex.into_parts().into_iter()
+        }).collect();
+        (total, Extraction::from_parts(parts))
+      }
+      Destructure::Object(m, ord) => {
+        let mut total = 0;
+        let parts = ord.iter().flat_map(|key| {
+          let d = m.get(key).unwrap();
+          let i = dtype.as_object().index_of(key).unwrap();
+          let sub_type = dtype.as_object().get(key).clone();
+          let (counted, ex) = self.extract(d, sub_type, at - total, extr.push(i));
+          total += counted;
+          ex.into_parts().into_iter()
+        }).collect();
+        (total, Extraction::from_parts(parts))
+      }
     }
   }
 
@@ -262,10 +389,20 @@ impl<'g> Compiler<'g> {
       } else {
         panic!("Unexpected token for object: {:?}", self.previous)
       };
-      self.consume(TokenTypeDiscr::Colon);
-      let t = self.expression();
-      object.add(name.clone(), t);
-      stack_order.push(name);
+      match self.current_ttd() {
+        TokenTypeDiscr::Colon => {
+          self.advance();
+          let t = self.expression();
+          object.add(name.clone(), t);
+          stack_order.push(name);
+        }
+        TokenTypeDiscr::Comma | TokenTypeDiscr::CloseCurl => {
+          let t = self.variable();
+          object.add(name.clone(), t);
+          stack_order.push(name);
+        }
+        other => panic!("Bad follow token for map item: {:?}", other)
+      }
 
       separated = false;
       if self.current_ttd() == TokenTypeDiscr::Comma {
@@ -399,7 +536,7 @@ impl<'g> Compiler<'g> {
       }
       arity += 1;
       param_names.push(self.parse_variable());
-      self.mark_initialized(Type::Unset);
+      self.mark_last_initialized(Type::Unset);
 
       separated = false;
       if self.current_ttd() == TokenTypeDiscr::Comma {
@@ -648,7 +785,8 @@ impl<'g> Compiler<'g> {
   fn emit_jump(&mut self, code: Opcode) -> Jump { self.scope.emit_jump(code) }
   fn patch_jump(&mut self, offset: Jump) { self.scope.patch_jump(offset); }
   fn declare_variable(&mut self, name: String) { self.scope.add_local(name); }
-  fn mark_initialized(&mut self, vtype: Type) { self.scope.mark_initialized(vtype); }
+  fn mark_initialized(&mut self, ind: usize, vtype: Type) { self.scope.mark_initialized(ind, vtype); }
+  fn mark_last_initialized(&mut self, vtype: Type) { self.scope.mark_last_initialized(vtype); }
   fn resolve_local(&self, name: &str) -> Option<(usize, Type)> { self.scope.resolve_local(name) }
   fn resolve_upval(&mut self, name: &str) -> Option<(usize, Type)> { self.scope.resolve_upval(name) }
   fn begin_scope(&mut self) { self.scope.begin_scope() }
@@ -657,6 +795,23 @@ impl<'g> Compiler<'g> {
   fn pop_scope_zero(self) -> ScopeZero { self.scope.pop_scope_zero() }
   fn pop_scope_one(&mut self) -> (ScopeOne, Vec<Token>) { self.scope.pop_scope_one() }
   fn pop_scope_later(&mut self) -> ScopeLater { self.scope.pop_scope_later() }
+}
+
+#[derive(Debug)]
+enum Destructure {
+  Ident(String),
+  Array(Vec<Destructure>),
+  Object(HashMap<String, Destructure>, Vec<String>)
+}
+
+impl Destructure {
+  fn idents_len(&self) -> usize {
+    match self {
+      Self::Ident(_) => 1,
+      Self::Array(v) => v.iter().map(|d| d.idents_len()).sum(),
+      Self::Object(m, _) => m.values().map(|d| d.idents_len()).sum()
+    }
+  }
 }
 
 fn variable(compiler: &mut Compiler) -> Type { compiler.variable() }
