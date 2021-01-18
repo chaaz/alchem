@@ -223,69 +223,34 @@ impl<'g> Compiler<'g> {
       TokenTypeDiscr::OpenSquare => {
         self.advance();
         let mut d = Vec::new();
-        let mut separated = true;
-        while self.current_ttd() != TokenTypeDiscr::CloseSquare {
-          if d.len() >= 255 {
-            panic!("More than 255 array destructures.");
-          }
-          if !separated {
-            panic!("Missing comma after array destructure.");
-          }
-
-          d.push(self.destructure());
-
-          separated = false;
-          if self.current_ttd() == TokenTypeDiscr::Comma {
-            self.consume(TokenTypeDiscr::Comma);
-            separated = true;
-          }
-        }
-        self.consume(TokenTypeDiscr::CloseSquare);
+        self.handle_commas(TokenTypeDiscr::CloseSquare, 255, "array destructure", |this| {
+          d.push(this.destructure());
+        });
         Destructure::Array(d)
       }
       TokenTypeDiscr::OpenCurl => {
         self.advance();
         let mut d = HashMap::new();
         let mut ord = Vec::new();
-        let mut separated = true;
-        while self.current_ttd() != TokenTypeDiscr::CloseCurl {
-          if d.len() >= 255 {
-            panic!("More than 255 object destructure.");
-          }
-          if !separated {
-            panic!("Missing comma after object destructure.");
-          }
 
-          self.consume(TokenTypeDiscr::Identifier);
-          let name = if let TokenType::Identifier(s) = self.previous.token_type() {
-            s.to_string()
-          } else {
-            panic!("Unexpected token for object: {:?}", self.previous)
-          };
-          match self.current_ttd() {
+        self.handle_commas(TokenTypeDiscr::CloseCurl, 255, "object destructure", |this| {
+          this.consume(TokenTypeDiscr::Identifier);
+          let name = this.previous.token_type().as_identifier().to_string();
+          let sub = match this.current_ttd() {
             TokenTypeDiscr::Colon => {
-              self.advance();
-              let sub = self.destructure();
-              d.insert(name.clone(), sub);
-              ord.push(name);
+              this.advance();
+              this.destructure()
             }
             TokenTypeDiscr::Comma | TokenTypeDiscr::CloseCurl => {
-              let key = name.clone();
-              self.declare_variable(name.clone());
-              let sub = Destructure::Ident(name.clone());
-              d.insert(key, sub);
-              ord.push(name);
+              this.declare_variable(name.clone());
+              Destructure::Ident(name.clone())
             }
             other => panic!("Bad follow token for map item: {:?}", other)
-          }
+          };
+          d.insert(name.clone(), sub);
+          ord.push(name);
+        });
 
-          separated = false;
-          if self.current_ttd() == TokenTypeDiscr::Comma {
-            self.consume(TokenTypeDiscr::Comma);
-            separated = true;
-          }
-        }
-        self.consume(TokenTypeDiscr::CloseCurl);
         Destructure::Object(d, ord)
       }
       other => panic!("Unexpected token to extract: {:?}", other)
@@ -346,25 +311,9 @@ impl<'g> Compiler<'g> {
   fn array(&mut self) -> Type {
     let mut array = Array::new();
 
-    let mut separated = true;
-    while self.current_ttd() != TokenTypeDiscr::CloseSquare {
-      if array.len() >= 255 {
-        panic!("More than 255 array members.");
-      }
-      if !separated {
-        panic!("Missing comma after argument.");
-      }
-
-      let t = self.expression();
-      array.add(t);
-
-      separated = false;
-      if self.current_ttd() == TokenTypeDiscr::Comma {
-        self.consume(TokenTypeDiscr::Comma);
-        separated = true;
-      }
-    }
-    self.consume(TokenTypeDiscr::CloseSquare);
+    self.handle_commas(TokenTypeDiscr::CloseSquare, 255, "array member", |this| {
+      array.add(this.expression());
+    });
 
     self.emit_instr(Opcode::Array(array.len()));
     Type::Array(Arc::new(array))
@@ -374,43 +323,20 @@ impl<'g> Compiler<'g> {
     let mut object = Object::new();
     let mut stack_order = Vec::new();
 
-    let mut separated = true;
-    while self.current_ttd() != TokenTypeDiscr::CloseCurl {
-      if object.len() >= 255 {
-        panic!("More than 255 object members.");
-      }
-      if !separated {
-        panic!("Missing comma after argument.");
-      }
-
-      self.consume(TokenTypeDiscr::Identifier);
-      let name = if let TokenType::Identifier(s) = self.previous.token_type() {
-        s.to_string()
-      } else {
-        panic!("Unexpected token for object: {:?}", self.previous)
-      };
-      match self.current_ttd() {
+    self.handle_commas(TokenTypeDiscr::CloseCurl, 255, "object member", |this| {
+      this.consume(TokenTypeDiscr::Identifier);
+      let name = this.previous.token_type().as_identifier().to_string();
+      let t = match this.current_ttd() {
         TokenTypeDiscr::Colon => {
-          self.advance();
-          let t = self.expression();
-          object.add(name.clone(), t);
-          stack_order.push(name);
+          this.advance();
+          this.expression()
         }
-        TokenTypeDiscr::Comma | TokenTypeDiscr::CloseCurl => {
-          let t = self.variable();
-          object.add(name.clone(), t);
-          stack_order.push(name);
-        }
+        TokenTypeDiscr::Comma | TokenTypeDiscr::CloseCurl => this.variable(),
         other => panic!("Bad follow token for map item: {:?}", other)
-      }
-
-      separated = false;
-      if self.current_ttd() == TokenTypeDiscr::Comma {
-        self.consume(TokenTypeDiscr::Comma);
-        separated = true;
-      }
-    }
-    self.consume(TokenTypeDiscr::CloseCurl);
+      };
+      object.add(name.clone(), t);
+      stack_order.push(name);
+    });
 
     let order = stack_order.iter().map(|n| object.index_of(n).unwrap()).collect();
     self.emit_instr(Opcode::Object(order));
@@ -524,27 +450,15 @@ impl<'g> Compiler<'g> {
     self.begin_scope();
 
     self.consume(TokenTypeDiscr::OpenParen);
-    let mut separated = true;
     let mut arity: u8 = 0;
     let mut param_names = Vec::new();
-    while self.current_ttd() != TokenTypeDiscr::CloseParen {
-      if !separated {
-        panic!("Missing comma after parameter {}.", arity - 1);
-      }
-      if arity == 255 {
-        panic!("More than {} parameters.", arity)
-      }
-      arity += 1;
-      param_names.push(self.parse_variable());
-      self.mark_last_initialized(Type::Unset);
 
-      separated = false;
-      if self.current_ttd() == TokenTypeDiscr::Comma {
-        self.advance();
-        separated = true;
-      }
-    }
-    self.consume(TokenTypeDiscr::CloseParen);
+    self.handle_commas(TokenTypeDiscr::CloseParen, 255, "parameter", |this| {
+      arity += 1;
+      param_names.push(this.parse_variable());
+      this.mark_last_initialized(Type::Unset);
+    });
+
     self.consume(TokenTypeDiscr::OpenCurl);
     self.scope.start_collecting();
     self.body();
@@ -595,23 +509,9 @@ impl<'g> Compiler<'g> {
 
   fn argument_list(&mut self) -> Vec<Type> {
     let mut list = Vec::new();
-    let mut separated = true;
-    while self.current_ttd() != TokenTypeDiscr::CloseParen {
-      if list.len() == 255 {
-        panic!("More than {} function arguments.", list.len());
-      }
-      if !separated {
-        panic!("Missing comma after argument.");
-      }
-      list.push(self.expression());
-
-      separated = false;
-      if self.current_ttd() == TokenTypeDiscr::Comma {
-        self.consume(TokenTypeDiscr::Comma);
-        separated = true;
-      }
-    }
-    self.consume(TokenTypeDiscr::CloseParen);
+    self.handle_commas(TokenTypeDiscr::CloseParen, 255, "argument", |this| {
+      list.push(this.expression());
+    });
     list
   }
 
@@ -795,6 +695,29 @@ impl<'g> Compiler<'g> {
   fn pop_scope_zero(self) -> ScopeZero { self.scope.pop_scope_zero() }
   fn pop_scope_one(&mut self) -> (ScopeOne, Vec<Token>) { self.scope.pop_scope_one() }
   fn pop_scope_later(&mut self) -> ScopeLater { self.scope.pop_scope_later() }
+
+  fn handle_commas<F: FnMut(&mut Self)>(&mut self, closer: TokenTypeDiscr, max_elm: usize, descr_elm: &str, mut f: F) {
+    let mut separated = true;
+    let mut items = 0;
+    while self.current_ttd() != closer {
+      items += 1;
+      if items >= max_elm {
+        panic!("More than {} {}.", max_elm, descr_elm);
+      }
+      if !separated {
+        panic!("Missing comma after {}.", descr_elm);
+      }
+
+      f(self);
+
+      separated = false;
+      if self.current_ttd() == TokenTypeDiscr::Comma {
+        self.consume(TokenTypeDiscr::Comma);
+        separated = true;
+      }
+    }
+    self.consume(closer);
+  }
 }
 
 #[derive(Debug)]

@@ -517,10 +517,6 @@ impl Chunk {
 
   // FAST
   #[inline]
-  pub fn too_far(&self, ind: usize) -> bool { ind >= self.code.len() }
-
-  // FAST
-  #[inline]
   pub fn at_fast(&self, ind: usize) -> &Instr { &self.code[ind] }
 
   pub fn add_value_anon(&mut self, v: Declared) {

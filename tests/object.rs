@@ -57,3 +57,6 @@ async fn destr_multi_short() { expect("{a:{x}}={a:{b:1,x:3},d:5,e:6};=x", 3).awa
 
 #[tokio::test]
 async fn destr_assgn_multi_short() { expect("a={a:{b:1,x:3},d:5,e:6};{a:{x}}=a;=x", 3).await; }
+
+#[tokio::test]
+async fn dest_short_robust() { expect("a={x:{b:1,x:3},d:5,e:6};{x}=a;=x.x", 3).await; }
