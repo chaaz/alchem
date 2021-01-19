@@ -1,7 +1,7 @@
 //! Test utility.
 
 use alchem::native_fn;
-use alchem::value::{add_native, new_globals, Globals, MorphStatus, NativeInfo, Type, Value};
+use alchem::value::{add_native, new_globals, Globals, MorphStatus, NativeInfo, Type, NoCustom, Value};
 use alchem::vm::{Runner, Vm};
 use macro_rules_attribute::macro_rules_attribute;
 
@@ -25,7 +25,7 @@ pub async fn expectn<V: Into<Value>>(script: &str, expected: V) {
   assert_eq!(vm.interpret(script, globals).await, expected.into());
 }
 
-fn ntvt_print(_args: Vec<Type>, _globals: &Globals) -> MorphStatus {
+fn ntvt_print(_args: Vec<Type<NoCustom>>, _globals: &Globals<NoCustom>) -> MorphStatus<NoCustom> {
   let info = NativeInfo::new();
   MorphStatus::NativeCompleted(info, Type::Number)
 }
@@ -36,14 +36,14 @@ async fn ntv_print(vals: Vec<Value>, _info: NativeInfo, _runner: &mut Runner) ->
   Value::Int(1)
 }
 
-fn ntvt_number(_: Vec<Type>, _: &Globals) -> MorphStatus {
+fn ntvt_number(_: Vec<Type<NoCustom>>, _: &Globals<NoCustom>) -> MorphStatus<NoCustom> {
   MorphStatus::NativeCompleted(NativeInfo::new(), Type::Number)
 }
 
 #[macro_rules_attribute(native_fn!)]
 async fn ntv_number(_argv: Vec<Value>, _info: NativeInfo, _runner: &mut Runner) -> Value { Value::Int(42) }
 
-fn ntvt_recall(args: Vec<Type>, globals: &Globals) -> MorphStatus {
+fn ntvt_recall(args: Vec<Type<NoCustom>>, globals: &Globals<NoCustom>) -> MorphStatus<NoCustom> {
   assert_eq!(args.len(), 1);
   let func = args[0].as_function().upgrade().unwrap();
   assert_eq!(func.arity(), 0);
@@ -66,7 +66,7 @@ async fn ntv_recall(vals: Vec<Value>, info: NativeInfo, runner: &mut Runner) -> 
   runner.run_value(f, inst_ind, Vec::new()).await
 }
 
-fn ntvt_recall_1(args: Vec<Type>, globals: &Globals) -> MorphStatus {
+fn ntvt_recall_1(args: Vec<Type<NoCustom>>, globals: &Globals<NoCustom>) -> MorphStatus<NoCustom> {
   let mut args = args.into_iter();
   let func = args.next().unwrap().as_function().upgrade().unwrap();
   assert_eq!(func.arity(), 1);
@@ -90,7 +90,7 @@ async fn ntv_recall_1(vals: Vec<Value>, info: NativeInfo, runner: &mut Runner) -
   runner.run_value(f, inst_ind, vec![a]).await
 }
 
-fn ntvt_reloop(args: Vec<Type>, globals: &Globals) -> MorphStatus {
+fn ntvt_reloop(args: Vec<Type<NoCustom>>, globals: &Globals<NoCustom>) -> MorphStatus<NoCustom> {
   assert_eq!(args.len(), 1);
   let func = args[0].as_function().upgrade().unwrap();
   assert_eq!(func.arity(), 0);

@@ -3,7 +3,7 @@
 use crate::compiler::Compiler;
 use crate::scanner::Token;
 use crate::scope::ZeroMode;
-use crate::types::{DependsOn, Type};
+use crate::types::{DependsOn, Type, CustomType};
 use crate::value::{Declared, Value};
 use crate::vm::Runner;
 use std::collections::HashMap;
@@ -17,23 +17,24 @@ const MAX_MONOMORPHS: usize = 20;
 
 pub type Native =
   for<'r> fn(Vec<Value>, NativeInfo, &'r mut Runner) -> Pin<Box<dyn Future<Output = Value> + Send + 'r>>;
-pub type TypeNative = fn(Vec<Type>, &Globals) -> MorphStatus;
+pub type TypeNative<C> = fn(Vec<Type<C>>, &Globals<C>) -> MorphStatus<C>;
 pub type ObjUpvalues = Mutex<Vec<ObjUpvalue>>;
-pub type Globals = HashMap<String, Arc<Function>>;
+pub type Globals<C> = HashMap<String, Arc<Function<C>>>;
+pub type KnownUpvals<C> = HashMap<String, (usize, Type<C>)>;
 
-pub struct Function {
+pub struct Function<C: CustomType> {
   arity: u8,
-  fn_type: FnType,
-  instances: Mutex<Vec<Monomorph>>,
-  known_upvals: HashMap<String, (usize, Type)>
+  fn_type: FnType<C>,
+  instances: Mutex<Vec<Monomorph<C>>>,
+  known_upvals: KnownUpvals<C>
 }
 
-pub enum FnType {
-  Native(Native, TypeNative),
+pub enum FnType<C: CustomType> {
+  Native(Native, TypeNative<C>),
   Alchem(Vec<String>, Vec<Token>)
 }
 
-impl fmt::Debug for Function {
+impl<C: CustomType> fmt::Debug for Function<C> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     let arg_n = if self.arity == 1 { "arg" } else { "args" };
     let upv_n = if self.known_upvals.len() == 1 { "capture" } else { "captures" };
@@ -41,8 +42,8 @@ impl fmt::Debug for Function {
   }
 }
 
-impl Function {
-  pub fn script(chunk: Chunk, stype: Type) -> Function {
+impl<C: CustomType + 'static> Function<C> {
+  pub fn script(chunk: Chunk<C>, stype: Type<C>) -> Function<C> {
     Function {
       arity: 0,
       fn_type: FnType::Alchem(Vec::new(), Vec::new()),
@@ -59,12 +60,12 @@ impl Function {
   }
 
   pub fn new_alchem(
-    arity: u8, param_names: Vec<String>, code: Vec<Token>, known_upvals: HashMap<String, (usize, Type)>
-  ) -> Function {
+    arity: u8, param_names: Vec<String>, code: Vec<Token>, known_upvals: KnownUpvals<C>
+  ) -> Function<C> {
     Function { arity, fn_type: FnType::Alchem(param_names, code), instances: Mutex::new(Vec::new()), known_upvals }
   }
 
-  pub fn new_native(arity: u8, native: Native, type_native: TypeNative) -> Function {
+  pub fn new_native(arity: u8, native: Native, type_native: TypeNative<C>) -> Function<C> {
     Function {
       arity,
       fn_type: FnType::Native(native, type_native),
@@ -74,8 +75,8 @@ impl Function {
   }
 
   pub fn is_single_use(&self) -> bool { self.known_upvals.values().any(|(_, t)| t.is_single_use()) }
-  pub fn into_collapse(self) -> (u8, Vec<Monomorph>) { (self.arity, self.instances.into_inner().unwrap()) }
-  pub fn fn_type(&self) -> &FnType { &self.fn_type }
+  pub fn into_collapse(self) -> (u8, Vec<Monomorph<C>>) { (self.arity, self.instances.into_inner().unwrap()) }
+  pub fn fn_type(&self) -> &FnType<C> { &self.fn_type }
   pub fn arity(&self) -> u8 { self.arity }
   pub fn smart_name(&self) -> String { "...".into() }
 
@@ -84,24 +85,24 @@ impl Function {
     self.arity
   }
 
-  pub fn find_or_build(self: &Arc<Function>, args: Vec<Type>, globals: &Globals) -> (usize, Option<Type>) {
+  pub fn find_or_build(self: &Arc<Function<C>>, args: Vec<Type<C>>, globals: &Globals<C>) -> (usize, Option<Type<C>>) {
     self.find_known_type(&args).unwrap_or_else(|| {
       let inst_ind = self.reserve_inst(args);
       (inst_ind, self.replay(inst_ind, globals))
     })
   }
 
-  pub fn known_type(&self, inst_ind: usize) -> Option<Type> {
+  pub fn known_type(&self, inst_ind: usize) -> Option<Type<C>> {
     let instances = self.instances.try_lock().unwrap();
     instances[inst_ind].known_type()
   }
 
-  pub fn find_known_type(&self, args: &[Type]) -> Option<(usize, Option<Type>)> {
+  pub fn find_known_type(&self, args: &[Type<C>]) -> Option<(usize, Option<Type<C>>)> {
     let instances = self.instances.try_lock().unwrap();
     instances.iter().enumerate().find(|(_, m)| m.args == args).map(|(i, m)| (i, m.known_type()))
   }
 
-  pub fn reserve_inst(&self, args: Vec<Type>) -> usize {
+  pub fn reserve_inst(&self, args: Vec<Type<C>>) -> usize {
     let mut instances = self.instances.try_lock().unwrap();
     instances.push(Monomorph::new(args));
     if instances.len() > MAX_MONOMORPHS {
@@ -110,7 +111,7 @@ impl Function {
     instances.len() - 1
   }
 
-  pub fn replay_if_ready(self: &Arc<Function>, inst_ind: usize, globals: &Globals) -> Option<Type> {
+  pub fn replay_if_ready(self: &Arc<Function<C>>, inst_ind: usize, globals: &Globals<C>) -> Option<Type<C>> {
     let (needs_rebuild, build_deps, needs_type, type_deps) = {
       let instances = self.instances.try_lock().unwrap();
       let morph = &instances[inst_ind];
@@ -131,7 +132,7 @@ impl Function {
     }
   }
 
-  pub fn replay(self: &Arc<Function>, inst_ind: usize, globals: &Globals) -> Option<Type> {
+  pub fn replay(self: &Arc<Function<C>>, inst_ind: usize, globals: &Globals<C>) -> Option<Type<C>> {
     // TODO(later): protect against indeterminate recursive types, by ensuring that the type deps for a function
     // does not depend strictly on itself or at all on any of its other instances.
     //
@@ -155,7 +156,7 @@ impl Function {
       FnType::Alchem(pnames, code) => {
         let self_index = MorphIndex::weak(self, inst_ind);
         let code = code.clone().into_iter();
-        let compiler = Compiler::replay(pnames.clone(), args, code, self.known_upvals.clone(), globals);
+        let compiler = Compiler::<C>::replay(pnames.clone(), args, code, self.known_upvals.clone(), globals);
         let (scope_zero, rtype) = compiler.compile();
 
         match scope_zero.into_mode() {
@@ -233,7 +234,7 @@ impl Function {
     new_type
   }
 
-  fn unlink_all(self: &Arc<Function>, inst_ind: usize) {
+  fn unlink_all(self: &Arc<Function<C>>, inst_ind: usize) {
     let (build_dpcs, type_dpcs) = {
       let mut instances = self.instances.try_lock().unwrap();
       let morph = &mut instances[inst_ind];
@@ -257,17 +258,17 @@ impl Function {
   }
 }
 
-pub struct Monomorph {
-  args: Vec<Type>,
-  status: MorphStatus,
-  build_dependencies: Vec<MorphIndex>,
-  type_dependencies: DependsOn,
-  build_dependents: Vec<MorphIndex>,
-  type_dependents: Vec<MorphIndex>
+pub struct Monomorph<C: CustomType> {
+  args: Vec<Type<C>>,
+  status: MorphStatus<C>,
+  build_dependencies: Vec<MorphIndex<C>>,
+  type_dependencies: DependsOn<C>,
+  build_dependents: Vec<MorphIndex<C>>,
+  type_dependents: Vec<MorphIndex<C>>
 }
 
-impl Monomorph {
-  pub fn new(args: Vec<Type>) -> Monomorph {
+impl<C: CustomType + 'static> Monomorph<C> {
+  pub fn new(args: Vec<Type<C>>) -> Monomorph<C> {
     Monomorph {
       args,
       status: MorphStatus::Reserved,
@@ -278,24 +279,24 @@ impl Monomorph {
     }
   }
 
-  pub fn into_status(self) -> MorphStatus { self.status }
+  pub fn into_status(self) -> MorphStatus<C> { self.status }
   pub fn is_known(&self) -> bool { self.status.is_known() }
-  pub fn known_type(&self) -> Option<Type> { self.status.known_type() }
-  pub fn set_status(&mut self, status: MorphStatus) { self.status = status; }
+  pub fn known_type(&self) -> Option<Type<C>> { self.status.known_type() }
+  pub fn set_status(&mut self, status: MorphStatus<C>) { self.status = status; }
 
-  pub fn type_dependents_mut(&mut self) -> &mut Vec<MorphIndex> { &mut self.type_dependents }
-  pub fn build_dependents_mut(&mut self) -> &mut Vec<MorphIndex> { &mut self.build_dependents }
+  pub fn type_dependents_mut(&mut self) -> &mut Vec<MorphIndex<C>> { &mut self.type_dependents }
+  pub fn build_dependents_mut(&mut self) -> &mut Vec<MorphIndex<C>> { &mut self.build_dependents }
 }
 
-pub enum MorphStatus {
+pub enum MorphStatus<C: CustomType> {
   Reserved,
-  Known(Type),
-  Completed(Chunk, Type),
-  NativeCompleted(NativeInfo, Type)
+  Known(Type<C>),
+  Completed(Chunk<C>, Type<C>),
+  NativeCompleted(NativeInfo, Type<C>)
 }
 
-impl MorphStatus {
-  pub fn known_type(&self) -> Option<Type> {
+impl<C: CustomType + 'static> MorphStatus<C> {
+  pub fn known_type(&self) -> Option<Type<C>> {
     match self {
       Self::Known(t) | Self::Completed(_, t) | Self::NativeCompleted(_, t) if t.is_known() => Some(t.clone()),
       _ => None
@@ -323,21 +324,21 @@ impl NativeInfo {
 }
 
 #[derive(Clone, Debug)]
-pub struct MorphIndex {
-  function: Weak<Function>,
+pub struct MorphIndex<C: CustomType> {
+  function: Weak<Function<C>>,
   inst_index: usize
 }
 
-impl PartialEq for MorphIndex {
-  fn eq(&self, other: &MorphIndex) -> bool {
+impl<C: CustomType> PartialEq for MorphIndex<C> {
+  fn eq(&self, other: &MorphIndex<C>) -> bool {
     self.function.ptr_eq(&other.function) && self.inst_index == other.inst_index
   }
 }
 
-impl Eq for MorphIndex {}
+impl<C: CustomType> Eq for MorphIndex<C> {}
 
-impl MorphIndex {
-  pub fn weak(function: &Arc<Function>, inst_index: usize) -> MorphIndex {
+impl<C: CustomType + 'static> MorphIndex<C> {
+  pub fn weak(function: &Arc<Function<C>>, inst_index: usize) -> MorphIndex<C> {
     MorphIndex { function: Arc::downgrade(function), inst_index }
   }
 
@@ -345,11 +346,11 @@ impl MorphIndex {
 
   pub fn is_known(&self) -> bool { self.operate_morph(|morph| morph.is_known()).unwrap_or(true) }
 
-  fn replay_if_ready(&self, globals: &Globals) -> Option<Option<Type>> {
+  fn replay_if_ready(&self, globals: &Globals<C>) -> Option<Option<Type<C>>> {
     self.operate_func(|func, inst_ind| func.replay_if_ready(inst_ind, globals))
   }
 
-  pub fn add_build_dependency(&self, i: MorphIndex) {
+  pub fn add_build_dependency(&self, i: MorphIndex<C>) {
     self.operate_morph(|morph| {
       if !morph.build_dependencies.contains(&i) {
         morph.build_dependencies.push(i);
@@ -357,7 +358,7 @@ impl MorphIndex {
     });
   }
 
-  pub fn add_build_dependent(&self, i: MorphIndex) {
+  pub fn add_build_dependent(&self, i: MorphIndex<C>) {
     self.operate_morph(|morph| {
       if !morph.build_dependents.contains(&i) {
         morph.build_dependents.push(i);
@@ -365,11 +366,11 @@ impl MorphIndex {
     });
   }
 
-  pub fn remove_build_dependent(&self, i: MorphIndex) {
+  pub fn remove_build_dependent(&self, i: MorphIndex<C>) {
     self.operate_morph(|morph| morph.build_dependents.retain(|d| &i != d));
   }
 
-  pub fn add_type_dependent(&self, i: MorphIndex) {
+  pub fn add_type_dependent(&self, i: MorphIndex<C>) {
     self.operate_morph(|morph| {
       if !morph.type_dependents.contains(&i) {
         morph.type_dependents.push(i);
@@ -377,15 +378,15 @@ impl MorphIndex {
     });
   }
 
-  pub fn remove_type_dependent(&self, i: MorphIndex) {
+  pub fn remove_type_dependent(&self, i: MorphIndex<C>) {
     self.operate_morph(|morph| morph.type_dependents.retain(|d| &i != d));
   }
 
-  fn operate_func<T: 'static, F: FnOnce(Arc<Function>, usize) -> T>(&self, f: F) -> Option<T> {
+  fn operate_func<T: 'static, F: FnOnce(Arc<Function<C>>, usize) -> T>(&self, f: F) -> Option<T> {
     self.function.upgrade().map(|func| f(func, self.inst_index))
   }
 
-  fn operate_morph<T: 'static, F: FnOnce(&mut Monomorph) -> T>(&self, f: F) -> Option<T> {
+  fn operate_morph<T: 'static, F: FnOnce(&mut Monomorph<C>) -> T>(&self, f: F) -> Option<T> {
     self.function.upgrade().map(|func| f(&mut func.instances.try_lock().unwrap()[self.inst_index]))
   }
 }
@@ -493,18 +494,18 @@ impl Clone for ObjUpvalue {
   }
 }
 
-pub struct Chunk {
-  constants: Constants,
+pub struct Chunk<C: CustomType> {
+  constants: Constants<C>,
   code: Vec<Instr>
 }
 
-impl Default for Chunk {
-  fn default() -> Chunk { Chunk::new() }
+impl<C: CustomType> Default for Chunk<C> {
+  fn default() -> Chunk<C> { Chunk::new() }
 }
 
-impl Chunk {
-  pub fn new() -> Chunk { Chunk { constants: Constants::new(), code: Vec::new() } }
-  pub fn into_collapse(self) -> (Vec<Declared>, Vec<Instr>) { (self.constants.values, self.code) }
+impl<C: CustomType> Chunk<C> {
+  pub fn new() -> Chunk<C> { Chunk { constants: Constants::new(), code: Vec::new() } }
+  pub fn into_collapse(self) -> (Vec<Declared<C>>, Vec<Instr>) { (self.constants.values, self.code) }
 
   pub fn add_instr(&mut self, instr: Instr) -> usize {
     self.code.push(instr);
@@ -520,7 +521,7 @@ impl Chunk {
   #[inline]
   pub fn at_fast(&self, ind: usize) -> &Instr { &self.code[ind] }
 
-  pub fn add_value_anon(&mut self, v: Declared) {
+  pub fn add_value_anon(&mut self, v: Declared<C>) {
     let cc = self.add_constant(v);
     self.add_code_anon(Opcode::Constant(cc));
   }
@@ -534,10 +535,10 @@ impl Chunk {
     }
   }
 
-  pub fn add_constant(&mut self, cnst: Declared) -> usize { self.constants.add(cnst) }
+  pub fn add_constant(&mut self, cnst: Declared<C>) -> usize { self.constants.add(cnst) }
   pub fn constants_len(&self) -> usize { self.constants.len() }
   pub fn constants_is_empty(&self) -> bool { self.constants.is_empty() }
-  pub fn get_constant(&self, ind: usize) -> Option<&Declared> { self.constants.get(ind) }
+  pub fn get_constant(&self, ind: usize) -> Option<&Declared<C>> { self.constants.get(ind) }
 
   pub fn debug(&self) {
     println!("constants:");
@@ -551,22 +552,22 @@ impl Chunk {
   }
 }
 
-struct Constants {
-  values: Vec<Declared>
+struct Constants<C: CustomType> {
+  values: Vec<Declared<C>>
 }
 
-impl Default for Constants {
-  fn default() -> Constants { Constants::new() }
+impl<C: CustomType> Default for Constants<C> {
+  fn default() -> Constants<C> { Constants::new() }
 }
 
-impl Constants {
-  pub fn new() -> Constants { Constants { values: Vec::new() } }
+impl<C: CustomType> Constants<C> {
+  pub fn new() -> Constants<C> { Constants { values: Vec::new() } }
   pub fn len(&self) -> usize { self.values.len() }
   pub fn is_empty(&self) -> bool { self.values.is_empty() }
-  pub fn get(&self, ind: usize) -> Option<&Declared> { self.values.get(ind) }
-  pub fn iter(&self) -> impl Iterator<Item = &Declared> { self.values.iter() }
+  pub fn get(&self, ind: usize) -> Option<&Declared<C>> { self.values.get(ind) }
+  pub fn iter(&self) -> impl Iterator<Item = &Declared<C>> { self.values.iter() }
 
-  pub fn add(&mut self, v: Declared) -> usize {
+  pub fn add(&mut self, v: Declared<C>) -> usize {
     self.values.push(v);
     if self.len() > MAX_CONSTANTS {
       panic!("Too many constants in one chunk: {}", self.len());
@@ -662,17 +663,18 @@ impl ExtractionPart {
 #[cfg(test)]
 mod test {
   use super::*;
+  use crate::types::NoCustom;
 
   #[test]
   fn simple() {
-    let mut chunk = Chunk::new();
+    let mut chunk = Chunk::<NoCustom>::new();
     assert_eq!(chunk.add_code_anon(Opcode::Return), 0);
     assert_eq!(chunk.code.len(), 1);
   }
 
   #[test]
   fn const_int() {
-    let mut chunk = Chunk::new();
+    let mut chunk = Chunk::<NoCustom>::new();
     assert_eq!(chunk.add_constant(Declared::Float(1.2)), 0);
     assert_eq!(chunk.add_code_anon(Opcode::Constant(0)), 0);
     assert_eq!(chunk.code_len(), 1);
@@ -681,7 +683,7 @@ mod test {
 
   #[test]
   fn constants() {
-    let mut va = Constants::new();
+    let mut va = Constants::<NoCustom>::new();
     assert_eq!(va.add(Declared::Float(3.0)), 0);
     assert_eq!(va.values.len(), 1);
   }

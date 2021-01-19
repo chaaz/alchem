@@ -1,31 +1,37 @@
 //! The alchem compiler.
 
 use crate::collapsed::collapse_function;
-use crate::common::{Function, Globals, MorphIndex, Opcode, Upval, Extraction, ExtractionPart};
+use crate::common::{Function, Globals, MorphIndex, Opcode, Upval, Extraction, ExtractionPart, KnownUpvals};
 use crate::errors::Error;
 use crate::scanner::{Scanner, Token, TokenType, TokenTypeDiscr};
 use crate::scope::{Jump, ScopeLater, ScopeOne, ScopeStack, ScopeZero};
-use crate::types::{DependsOn, Type, Object, Array};
+use crate::types::{DependsOn, Type, Object, Array, NoCustom, CustomType};
 use crate::value::Declared;
 use lazy_static::lazy_static;
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::vec::IntoIter;
+use std::marker::PhantomData;
 
 lazy_static! {
-  static ref RULES: HashMap<TokenTypeDiscr, Rule> = construct_rules();
+  static ref RULES: HashMap<TokenTypeDiscr, Rule<NoCustom>> = construct_rules();
 }
 
-pub fn compile(source: &str, globals: &Globals) -> (ScopeZero, Type) {
+type Prefix<C> = Option<for<'r> fn(&'r mut Compiler<C>) -> Type<C>>;
+type Infix<C> = Option<for<'r> fn(&'r mut Compiler<C>, &Type<C>) -> Type<C>>;
+
+pub fn compile<C: CustomType + 'static>(
+  source: &str, globals: &Globals<C>
+) -> (ScopeZero<C>, Type<C>) {
   let mut scanner = Scanner::new(source);
   let compiler = Compiler::new(scanner.drain_into_iter(), globals);
   let (zero, stype) = compiler.compile();
   (zero, stype)
 }
 
-pub fn collapse_script(
-  scope: ScopeZero, stype: Type, globals: Globals
+pub fn collapse_script<C: CustomType + 'static>(
+  scope: ScopeZero<C>, stype: Type<C>, globals: Globals<C>
 ) -> (crate::collapsed::Function, usize, HashMap<String, crate::collapsed::Declared>) {
   let chunk = scope.into_chunk();
   let function = Function::script(chunk, stype);
@@ -33,18 +39,26 @@ pub fn collapse_script(
   (crate::collapsed::Function::from_common(Arc::new(function)), 0, globals)
 }
 
-pub struct Compiler<'g> {
+pub struct Compiler<'g, C>
+where
+  C: CustomType
+{
   scanner: IntoIter<Token>,
   current: Token,
   previous: Token,
   had_error: bool,
   panic_mode: bool,
-  scope: ScopeStack,
-  globals: &'g Globals
+  scope: ScopeStack<C>,
+  globals: &'g Globals<C>,
+  rules: HashMap<TokenTypeDiscr, Rule<C>>,
+  _target: PhantomData<fn() -> C>
 }
 
-impl<'g> Compiler<'g> {
-  pub fn new(scanner: IntoIter<Token>, globals: &'g Globals) -> Compiler<'g> {
+impl<'g, C> Compiler<'g, C>
+where
+  C: CustomType + 'static
+{
+  pub fn new(scanner: IntoIter<Token>, globals: &'g Globals<C>) -> Compiler<'g, C> {
     let mut compiler = Compiler {
       current: Token::new(TokenType::Bof, 0),
       previous: Token::new(TokenType::Bof, 0),
@@ -52,7 +66,9 @@ impl<'g> Compiler<'g> {
       had_error: false,
       panic_mode: false,
       scope: ScopeStack::new(),
-      globals
+      globals,
+      rules: construct_rules(),
+      _target: PhantomData
     };
     compiler.advance();
     compiler.begin_scope();
@@ -60,9 +76,9 @@ impl<'g> Compiler<'g> {
   }
 
   pub fn replay(
-    pnames: Vec<String>, args: Vec<Type>, code: IntoIter<Token>, known_upvals: HashMap<String, (usize, Type)>,
-    globals: &'g Globals
-  ) -> Compiler<'g> {
+    pnames: Vec<String>, args: Vec<Type<C>>, code: IntoIter<Token>, known_upvals: KnownUpvals<C>,
+    globals: &'g Globals<C>
+  ) -> Compiler<'g, C> {
     let mut compiler = Compiler {
       current: Token::new(TokenType::Bof, 0),
       previous: Token::new(TokenType::Bof, 0),
@@ -70,7 +86,9 @@ impl<'g> Compiler<'g> {
       had_error: false,
       panic_mode: false,
       scope: ScopeStack::known(known_upvals),
-      globals
+      globals,
+      rules: construct_rules(),
+      _target: PhantomData
     };
 
     compiler.advance();
@@ -85,7 +103,7 @@ impl<'g> Compiler<'g> {
     compiler
   }
 
-  pub fn compile(mut self) -> (ScopeZero, Type) {
+  pub fn compile(mut self) -> (ScopeZero<C>, Type<C>) {
     let btype = self.body();
     self.emit_instr(Opcode::Return);
 
@@ -96,7 +114,7 @@ impl<'g> Compiler<'g> {
     (zero, btype)
   }
 
-  fn end_compiler(self) -> ScopeZero {
+  fn end_compiler(self) -> ScopeZero<C> {
     debug_assert_eq!(self.scope.len(), 1);
     self.pop_scope_zero()
   }
@@ -159,7 +177,7 @@ impl<'g> Compiler<'g> {
     }
   }
 
-  fn body(&mut self) -> Type {
+  fn body(&mut self) -> Type<C> {
     loop {
       match self.current_ttd() {
         TokenTypeDiscr::Equals => {
@@ -177,7 +195,7 @@ impl<'g> Compiler<'g> {
     }
   }
 
-  fn block_content(&mut self) -> Type {
+  fn block_content(&mut self) -> Type<C> {
     self.begin_scope();
     let btype = self.body();
     self.end_scope();
@@ -257,7 +275,9 @@ impl<'g> Compiler<'g> {
     }
   }
 
-  fn extract(&mut self, destruct: &Destructure, dtype: Type, at: usize, extr: ExtractionPart) -> (usize, Extraction) {
+  fn extract(
+    &mut self, destruct: &Destructure, dtype: Type<C>, at: usize, extr: ExtractionPart
+  ) -> (usize, Extraction) {
     match destruct {
       Destructure::Ident(_) => {
         self.mark_initialized(at, dtype);
@@ -299,16 +319,16 @@ impl<'g> Compiler<'g> {
     }
   }
 
-  fn block(&mut self) -> Type {
+  fn block(&mut self) -> Type<C> {
     self.consume(TokenTypeDiscr::OpenCurl);
     let btype = self.block_content();
     self.consume(TokenTypeDiscr::CloseCurl);
     btype
   }
 
-  fn expression(&mut self) -> Type { self.parse_precendence(Precedence::Or) }
+  fn expression(&mut self) -> Type<C> { self.parse_precendence(Precedence::Or) }
 
-  fn array(&mut self) -> Type {
+  fn array(&mut self) -> Type<C> {
     let mut array = Array::new();
 
     self.handle_commas(TokenTypeDiscr::CloseSquare, 255, "array member", |this| {
@@ -319,7 +339,7 @@ impl<'g> Compiler<'g> {
     Type::Array(Arc::new(array))
   }
 
-  fn object(&mut self) -> Type {
+  fn object(&mut self) -> Type<C> {
     let mut object = Object::new();
     let mut stack_order = Vec::new();
 
@@ -343,12 +363,12 @@ impl<'g> Compiler<'g> {
     Type::Object(Arc::new(object))
   }
 
-  fn literal(&mut self) -> Type {
+  fn literal(&mut self) -> Type<C> {
     // `self.emit_value(to_value::<$t>($v)?)` doesn't work because of
     // https://github.com/rust-lang/rust/issues/56254
     macro_rules! emit_value {
       ($v:tt, $t:ty, $ty:expr) => {{
-        let to_valued = to_value::<$t>($v);
+        let to_valued = to_value::<$t, _>($v);
         self.emit_value(to_valued, $ty)
       }};
     }
@@ -363,7 +383,7 @@ impl<'g> Compiler<'g> {
     }
   }
 
-  fn variable(&mut self) -> Type {
+  fn variable(&mut self) -> Type<C> {
     if let TokenType::Identifier(s) = self.previous.token_type() {
       let name = s.to_string();
       if let Some((c, vtype)) = self.resolve_local(&name) {
@@ -385,13 +405,13 @@ impl<'g> Compiler<'g> {
     }
   }
 
-  fn grouping(&mut self) -> Type {
+  fn grouping(&mut self) -> Type<C> {
     let outtype = self.expression();
     self.consume(TokenTypeDiscr::CloseParen);
     outtype
   }
 
-  fn if_block(&mut self) -> Type {
+  fn if_block(&mut self) -> Type<C> {
     let test_type = self.expression();
     assert!(self.scope.len() > 1 || test_type != Type::Unset);
     assert!(!test_type.is_known() || test_type == Type::Bool);
@@ -445,7 +465,7 @@ impl<'g> Compiler<'g> {
     b1_type
   }
 
-  fn fn_sync(&mut self) -> Type {
+  fn fn_sync(&mut self) -> Type<C> {
     self.push_scope();
     self.begin_scope();
 
@@ -477,7 +497,7 @@ impl<'g> Compiler<'g> {
     }
   }
 
-  fn call(&mut self, intype: &Type) -> Type {
+  fn call(&mut self, intype: &Type<C>) -> Type<C> {
     let args = self.argument_list();
 
     if self.scope.len() == 1 {
@@ -507,7 +527,7 @@ impl<'g> Compiler<'g> {
     }
   }
 
-  fn argument_list(&mut self) -> Vec<Type> {
+  fn argument_list(&mut self) -> Vec<Type<C>> {
     let mut list = Vec::new();
     self.handle_commas(TokenTypeDiscr::CloseParen, 255, "argument", |this| {
       list.push(this.expression());
@@ -515,7 +535,7 @@ impl<'g> Compiler<'g> {
     list
   }
 
-  fn unary(&mut self) -> Type {
+  fn unary(&mut self) -> Type<C> {
     let ttd = self.previous_ttd();
     let outtype = self.parse_precendence(Precedence::Unary);
 
@@ -533,7 +553,7 @@ impl<'g> Compiler<'g> {
     outtype
   }
 
-  fn dot(&mut self, ltype: &Type) -> Type {
+  fn dot(&mut self, ltype: &Type<C>) -> Type<C> {
     self.advance();
     match self.previous.token_type() {
       TokenType::Identifier(s) => {
@@ -551,7 +571,7 @@ impl<'g> Compiler<'g> {
     }
   }
 
-  fn indot(&mut self, intype: &Type) -> Type {
+  fn indot(&mut self, intype: &Type<C>) -> Type<C> {
     self.advance();
     match self.previous.token_type() {
       TokenType::IntLit(s) => {
@@ -564,7 +584,7 @@ impl<'g> Compiler<'g> {
     }
   }
 
-  fn binary(&mut self, ltype: &Type) -> Type {
+  fn binary(&mut self, ltype: &Type<C>) -> Type<C> {
     let ttd = self.previous_ttd();
     let precedence = self.get_rule(ttd).precedence().up();
     let mut rtype = self.parse_precendence(precedence);
@@ -634,7 +654,7 @@ impl<'g> Compiler<'g> {
     rtype
   }
 
-  fn and(&mut self, intype: &Type) -> Type {
+  fn and(&mut self, intype: &Type<C>) -> Type<C> {
     let end_jump = self.emit_jump(Opcode::initial_jump_if_false());
     self.emit_instr(Opcode::Pop);
     let outtype = self.parse_precendence(Precedence::And);
@@ -644,7 +664,7 @@ impl<'g> Compiler<'g> {
     Type::Bool
   }
 
-  fn or(&mut self, intype: &Type) -> Type {
+  fn or(&mut self, intype: &Type<C>) -> Type<C> {
     let else_jump = self.emit_jump(Opcode::initial_jump_if_false());
     let end_jump = self.emit_jump(Opcode::initial_jump());
     self.patch_jump(else_jump);
@@ -656,13 +676,13 @@ impl<'g> Compiler<'g> {
     Type::Bool
   }
 
-  fn get_rule(&self, tt: TokenTypeDiscr) -> &Rule { &RULES[&tt] }
-  fn previous_rule(&self) -> &Rule { self.get_rule(self.previous_ttd()) }
-  fn current_rule(&self) -> &Rule { self.get_rule(self.current_ttd()) }
+  fn get_rule(&self, tt: TokenTypeDiscr) -> &Rule<C> { &self.rules[&tt] }
+  fn previous_rule(&self) -> &Rule<C> { self.get_rule(self.previous_ttd()) }
+  fn current_rule(&self) -> &Rule<C> { self.get_rule(self.current_ttd()) }
   fn previous_ttd(&self) -> TokenTypeDiscr { self.previous.token_type().discr() }
   fn current_ttd(&self) -> TokenTypeDiscr { self.current.token_type().discr() }
 
-  fn parse_precendence(&mut self, prec: Precedence) -> Type {
+  fn parse_precendence(&mut self, prec: Precedence) -> Type<C> {
     self.advance();
 
     let prefix = self.previous_rule().prefix().expect("Expected prefix expression.");
@@ -678,23 +698,23 @@ impl<'g> Compiler<'g> {
 
   // Defer to scope
 
-  fn add_constant(&mut self, v: Declared) -> usize { self.scope.add_constant(v) }
+  fn add_constant(&mut self, v: Declared<C>) -> usize { self.scope.add_constant(v) }
   fn emit_instr(&mut self, code: Opcode) { self.scope.emit_instr(code); }
-  fn emit_value(&mut self, v: Declared, vtype: Type) -> Type { self.scope.emit_value(v, vtype) }
-  fn emit_closure(&mut self, u: Vec<Upval>, f: Function) -> Arc<Function> { self.scope.emit_closure(u, f) }
+  fn emit_value(&mut self, v: Declared<C>, vtype: Type<C>) -> Type<C> { self.scope.emit_value(v, vtype) }
+  fn emit_closure(&mut self, u: Vec<Upval>, f: Function<C>) -> Arc<Function<C>> { self.scope.emit_closure(u, f) }
   fn emit_jump(&mut self, code: Opcode) -> Jump { self.scope.emit_jump(code) }
   fn patch_jump(&mut self, offset: Jump) { self.scope.patch_jump(offset); }
   fn declare_variable(&mut self, name: String) { self.scope.add_local(name); }
-  fn mark_initialized(&mut self, ind: usize, vtype: Type) { self.scope.mark_initialized(ind, vtype); }
-  fn mark_last_initialized(&mut self, vtype: Type) { self.scope.mark_last_initialized(vtype); }
-  fn resolve_local(&mut self, name: &str) -> Option<(usize, Type)> { self.scope.resolve_local(name) }
-  fn resolve_upval(&mut self, name: &str) -> Option<(usize, Type)> { self.scope.resolve_upval(name) }
+  fn mark_initialized(&mut self, ind: usize, vtype: Type<C>) { self.scope.mark_initialized(ind, vtype); }
+  fn mark_last_initialized(&mut self, vtype: Type<C>) { self.scope.mark_last_initialized(vtype); }
+  fn resolve_local(&mut self, name: &str) -> Option<(usize, Type<C>)> { self.scope.resolve_local(name) }
+  fn resolve_upval(&mut self, name: &str) -> Option<(usize, Type<C>)> { self.scope.resolve_upval(name) }
   fn begin_scope(&mut self) { self.scope.begin_scope() }
   fn end_scope(&mut self) { self.scope.end_scope() }
   fn push_scope(&mut self) { self.scope.push_scope(); }
-  fn pop_scope_zero(self) -> ScopeZero { self.scope.pop_scope_zero() }
-  fn pop_scope_one(&mut self) -> (ScopeOne, Vec<Token>) { self.scope.pop_scope_one() }
-  fn pop_scope_later(&mut self) -> ScopeLater { self.scope.pop_scope_later() }
+  fn pop_scope_zero(self) -> ScopeZero<C> { self.scope.pop_scope_zero() }
+  fn pop_scope_one(&mut self) -> (ScopeOne<C>, Vec<Token>) { self.scope.pop_scope_one() }
+  fn pop_scope_later(&mut self) -> ScopeLater<C> { self.scope.pop_scope_later() }
 
   fn handle_commas<F: FnMut(&mut Self)>(&mut self, closer: TokenTypeDiscr, max_elm: usize, descr_elm: &str, mut f: F) {
     let mut separated = true;
@@ -737,45 +757,49 @@ impl Destructure {
   }
 }
 
-fn variable(compiler: &mut Compiler) -> Type { compiler.variable() }
-fn unary(compiler: &mut Compiler) -> Type { compiler.unary() }
-fn literal(compiler: &mut Compiler) -> Type { compiler.literal() }
-fn array(compiler: &mut Compiler) -> Type { compiler.array() }
-fn object(compiler: &mut Compiler) -> Type { compiler.object() }
-fn grouping(compiler: &mut Compiler) -> Type { compiler.grouping() }
-fn if_block(compiler: &mut Compiler) -> Type { compiler.if_block() }
-fn fn_sync(compiler: &mut Compiler) -> Type { compiler.fn_sync() }
-fn binary(compiler: &mut Compiler, intype: &Type) -> Type { compiler.binary(intype) }
-fn indot(compiler: &mut Compiler, intype: &Type) -> Type { compiler.indot(intype) }
-fn dot(compiler: &mut Compiler, intype: &Type) -> Type { compiler.dot(intype) }
-fn and(compiler: &mut Compiler, intype: &Type) -> Type { compiler.and(intype) }
-fn or(compiler: &mut Compiler, intype: &Type) -> Type { compiler.or(intype) }
-fn call(compiler: &mut Compiler, intype: &Type) -> Type { compiler.call(intype) }
+fn variable<C: CustomType + 'static>(compiler: &mut Compiler<C>) -> Type<C> { compiler.variable() }
+fn unary<C: CustomType + 'static>(compiler: &mut Compiler<C>) -> Type<C> { compiler.unary() }
+fn literal<C: CustomType + 'static>(compiler: &mut Compiler<C>) -> Type<C> { compiler.literal() }
+fn array<C: CustomType + 'static>(compiler: &mut Compiler<C>) -> Type<C> { compiler.array() }
+fn object<C: CustomType + 'static>(compiler: &mut Compiler<C>) -> Type<C> { compiler.object() }
+fn grouping<C: CustomType + 'static>(compiler: &mut Compiler<C>) -> Type<C> { compiler.grouping() }
+fn if_block<C: CustomType + 'static>(compiler: &mut Compiler<C>) -> Type<C> { compiler.if_block() }
+fn fn_sync<C: CustomType + 'static>(compiler: &mut Compiler<C>) -> Type<C> { compiler.fn_sync() }
+fn binary<C: CustomType + 'static>(compiler: &mut Compiler<C>, intype: &Type<C>) -> Type<C> { compiler.binary(intype) }
+fn indot<C: CustomType + 'static>(compiler: &mut Compiler<C>, intype: &Type<C>) -> Type<C> { compiler.indot(intype) }
+fn dot<C: CustomType + 'static>(compiler: &mut Compiler<C>, intype: &Type<C>) -> Type<C> { compiler.dot(intype) }
+fn and<C: CustomType + 'static>(compiler: &mut Compiler<C>, intype: &Type<C>) -> Type<C> { compiler.and(intype) }
+fn or<C: CustomType + 'static>(compiler: &mut Compiler<C>, intype: &Type<C>) -> Type<C> { compiler.or(intype) }
+fn call<C: CustomType + 'static>(compiler: &mut Compiler<C>, intype: &Type<C>) -> Type<C> { compiler.call(intype) }
 
-fn to_value<V>(v: &str) -> Declared
+fn to_value<V, C>(v: &str) -> Declared<C>
 where
-  V: Into<Declared> + FromStr,
-  Error: From<<V as FromStr>::Err>
+  V: Into<Declared<C>> + FromStr,
+  Error: From<<V as FromStr>::Err>,
+  C: CustomType
 {
   v.parse::<V>().map_err(Error::from).unwrap().into()
 }
 
-struct Rule {
-  prefix: Option<for<'r> fn(&'r mut Compiler) -> Type>,
-  infix: Option<for<'r> fn(&'r mut Compiler, &Type) -> Type>,
+struct Rule<C>
+where
+  C: CustomType
+{
+  prefix: Prefix<C>,
+  infix: Infix<C>,
   precedence: Precedence
 }
 
-impl Rule {
-  pub fn new(
-    prefix: Option<for<'r> fn(&'r mut Compiler) -> Type>, infix: Option<for<'r> fn(&'r mut Compiler, &Type) -> Type>,
-    precedence: Precedence
-  ) -> Rule {
+impl<C> Rule<C>
+where
+  C: CustomType
+{
+  pub fn new(prefix: Prefix<C>, infix: Infix<C>, precedence: Precedence) -> Rule<C> {
     Rule { prefix, infix, precedence }
   }
 
-  pub fn prefix(&self) -> Option<fn(&mut Compiler) -> Type> { self.prefix }
-  pub fn infix(&self) -> Option<fn(&mut Compiler, &Type) -> Type> { self.infix }
+  pub fn prefix(&self) -> Prefix<C> { self.prefix }
+  pub fn infix(&self) -> Infix<C> { self.infix }
   pub fn precedence(&self) -> Precedence { self.precedence }
 }
 
@@ -819,7 +843,7 @@ impl Precedence {
   }
 }
 
-fn construct_rules() -> HashMap<TokenTypeDiscr, Rule> {
+fn construct_rules<C: CustomType + 'static>() -> HashMap<TokenTypeDiscr, Rule<C>> {
   let mut rules = HashMap::new();
 
   rules.insert(TokenTypeDiscr::Bof, Rule::new(None, None, Precedence::None));

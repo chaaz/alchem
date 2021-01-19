@@ -5,6 +5,7 @@ use crate::common::{Closure, Instr, Native, NativeInfo, ObjUpvalue, ObjUpvalues,
 use crate::compiler::{collapse_script, compile};
 use crate::inline::Inline;
 use crate::value::Value;
+use crate::types::CustomType;
 use std::collections::HashMap;
 use std::fmt;
 use std::future::Future;
@@ -30,7 +31,9 @@ impl Default for Vm {
 impl Vm {
   pub fn new() -> Vm { Vm { call_stack: Vec::new(), stack: Stack::new(), open_upvals: OpenUpvalues::new() } }
 
-  pub async fn interpret(self, source: &str, globals: crate::common::Globals) -> Value {
+  pub async fn interpret<C: CustomType + 'static>(
+    self, source: &str, globals: crate::common::Globals<C>
+  ) -> Value {
     debug_assert_eq!(self.stack.len(), 0);
     debug_assert_eq!(self.call_stack.len(), 0);
 

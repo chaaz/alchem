@@ -5,6 +5,7 @@
 
 use crate::common::{Instr, MorphStatus, Native, NativeInfo};
 use crate::value::Value;
+use crate::types::CustomType;
 use std::fmt;
 use std::sync::Arc;
 
@@ -31,7 +32,9 @@ impl fmt::Debug for Declared {
 }
 
 impl Declared {
-  pub fn from_common(d: crate::value::Declared) -> Declared {
+  pub fn from_common<C: CustomType + 'static>(
+    d: crate::value::Declared<C>
+  ) -> Declared {
     use crate::value::Declared as D;
 
     match d {
@@ -73,7 +76,9 @@ impl Declared {
   }
 }
 
-pub fn collapse_function(f: Arc<crate::common::Function>) -> Declared {
+pub fn collapse_function<C: CustomType + 'static>(
+  f: Arc<crate::common::Function<C>>
+) -> Declared {
   use crate::common::FnType;
 
   match f.fn_type() {
@@ -96,7 +101,9 @@ impl fmt::Debug for FuncNative {
 }
 
 impl FuncNative {
-  pub fn from_common(native: Native, f: Arc<crate::common::Function>) -> FuncNative {
+  pub fn from_common<C: CustomType + 'static>(
+    native: Native, f: Arc<crate::common::Function<C>>
+  ) -> FuncNative {
     let f = Arc::try_unwrap(f).expect("Multiple references to function during collapse.");
     let (arity, morphs) = f.into_collapse();
     let instances = morphs
@@ -128,7 +135,9 @@ impl fmt::Debug for Function {
 }
 
 impl Function {
-  pub fn from_common(f: Arc<crate::common::Function>) -> Function {
+  pub fn from_common<C: CustomType + 'static>(
+    f: Arc<crate::common::Function<C>>
+  ) -> Function {
     let f = Arc::try_unwrap(f).expect("Multiple references to function during collapse.");
     let (arity, morphs) = f.into_collapse();
     let instances = morphs
@@ -153,7 +162,7 @@ pub struct Chunk {
 }
 
 impl Chunk {
-  pub fn from_common(c: crate::common::Chunk) -> Chunk {
+  pub fn from_common<C: CustomType + 'static>(c: crate::common::Chunk<C>) -> Chunk {
     let (constants, code) = c.into_collapse();
     Chunk { constants: Constants::from_common(constants), code }
   }
@@ -186,7 +195,9 @@ struct Constants {
 }
 
 impl Constants {
-  pub fn from_common(c: Vec<crate::value::Declared>) -> Constants {
+  pub fn from_common<C: CustomType + 'static>(
+    c: Vec<crate::value::Declared<C>>
+  ) -> Constants {
     Constants { values: c.into_iter().map(Declared::from_common).collect() }
   }
 

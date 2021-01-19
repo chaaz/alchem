@@ -2,17 +2,21 @@
 
 use crate::collapsed::FuncNative;
 use crate::common::{Closure, Native, TypeNative};
+use crate::types::CustomType;
 use std::cmp::PartialEq;
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 
 pub use crate::common::{Function, Globals, MorphStatus, NativeInfo};
-pub use crate::types::Type;
+pub use crate::types::{Type, NoCustom};
 
-pub fn new_globals() -> Globals { HashMap::new() }
+pub fn new_globals() -> Globals<NoCustom> { HashMap::new() }
 
-pub fn add_native(globals: &mut Globals, name: impl ToString, arity: u8, native: Native, typen: TypeNative) {
+pub fn add_native<C>(globals: &mut Globals<C>, name: impl ToString, arity: u8, native: Native, typen: TypeNative<C>)
+where
+  C: CustomType + 'static
+{
   let function = Function::new_native(arity, native, typen);
   globals.insert(name.to_string(), Arc::new(function));
 }
@@ -260,15 +264,15 @@ impl Value {
   }
 }
 
-pub enum Declared {
+pub enum Declared<C: CustomType> {
   Float(f64),
   Int(i32),
   Bool(bool),
   String(Arc<str>),
-  Function(Arc<Function>)
+  Function(Arc<Function<C>>)
 }
 
-impl fmt::Debug for Declared {
+impl<C: CustomType> fmt::Debug for Declared<C> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
       Self::Float(v) => write!(f, "{}", v),
@@ -280,71 +284,58 @@ impl fmt::Debug for Declared {
   }
 }
 
-impl From<i32> for Declared {
-  fn from(v: i32) -> Declared { Declared::Int(v) }
+impl<C: CustomType> From<i32> for Declared<C> {
+  fn from(v: i32) -> Declared<C> { Declared::Int(v) }
 }
 
-impl From<f64> for Declared {
-  fn from(v: f64) -> Declared { Declared::Float(v) }
+impl<C: CustomType> From<f64> for Declared<C> {
+  fn from(v: f64) -> Declared<C> { Declared::Float(v) }
 }
 
-impl From<bool> for Declared {
-  fn from(v: bool) -> Declared { Declared::Bool(v) }
+impl<C: CustomType> From<bool> for Declared<C> {
+  fn from(v: bool) -> Declared<C> { Declared::Bool(v) }
 }
 
-impl From<String> for Declared {
-  fn from(v: String) -> Declared { Declared::String(v.into()) }
+impl<C: CustomType> From<String> for Declared<C> {
+  fn from(v: String) -> Declared<C> { Declared::String(v.into()) }
 }
 
-impl From<&str> for Declared {
-  fn from(v: &str) -> Declared { v.to_string().into() }
+impl<C: CustomType> From<&str> for Declared<C> {
+  fn from(v: &str) -> Declared<C> { v.to_string().into() }
 }
 
-impl From<Function> for Declared {
-  fn from(v: Function) -> Declared { Declared::Function(Arc::new(v)) }
+impl<C: CustomType> From<Function<C>> for Declared<C> {
+  fn from(v: Function<C>) -> Declared<C> { Declared::Function(Arc::new(v)) }
 }
 
-impl From<Arc<Function>> for Declared {
-  fn from(v: Arc<Function>) -> Declared { Declared::Function(v) }
+impl<C: CustomType> From<Arc<Function<C>>> for Declared<C> {
+  fn from(v: Arc<Function<C>>) -> Declared<C> { Declared::Function(v) }
 }
 
-impl Declared {
+impl<C: CustomType> Declared<C> {
   pub fn as_str(&self) -> Option<&str> {
     match self {
       Self::String(s) => Some(s),
       _ => None
     }
   }
-
-  // pub fn as_function(&self) -> Arc<Function> {
-  //   match self {
-  //     Self::Function(v) => v.clone(),
-  //     _ => panic!("Not a function: {:?}", self)
-  //   }
-  // }
-
-  // pub fn to_value(&self) -> Value {
-  //   match self {
-  //     Self::Float(v) => Value::Float(*v),
-  //     Self::Int(v) => Value::Int(*v),
-  //     Self::Bool(v) => Value::Bool(*v),
-  //     Self::String(v) => Value::String(v.clone()),
-  //     Self::Function(_) => {
-  //       // You have to use `as_function`, and then generate a closure out of it: see handling of Opcode::closure
-  //       // in `src/vm.rs`
-  //       panic!("Can't create a function value.")
-  //     }
-  //   }
-  // }
 }
 
 // convert
 //
-// async fn print(vals: Vec<Value>, runner: &mut Runner) -> Value
+// ```
+// async fn print(
+//   vals: Vec<Value>, info: NativeInfo, run: &mut Runner
+// ) -> Value
+// ```
 //
 // to
 //
-// fn print<'r>(vals: Vec<Value>, _runner: &'r mut Runner) -> Pin<Box<dyn Future<Output = Value> + Send + 'r>>
+// ```
+// fn print<'r>(
+//   vals: Vec<Value>, info: NativeInfo, run: &'r mut Runner
+// ) -> Pin<Box<dyn Future<Output = Value> + Send + 'r>>`
+// ```
 
 #[macro_export]
 macro_rules! native_fn {(

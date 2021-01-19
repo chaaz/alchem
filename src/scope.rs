@@ -1,8 +1,8 @@
 //! Scope and emit rules for the compiler.
 
-use crate::common::{Chunk, Function, Instr, MorphIndex, Opcode, Upval};
+use crate::common::{Chunk, Function, Instr, MorphIndex, Opcode, Upval, KnownUpvals};
 use crate::scanner::Token;
-use crate::types::Type;
+use crate::types::{Type, CustomType};
 use crate::value::Declared;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -43,16 +43,16 @@ impl Collector {
   }
 }
 
-pub struct ScopeStack {
-  zero: ScopeZero,
-  one: Option<ScopeOne>,
-  later: Vec<ScopeLater>,
+pub struct ScopeStack<C: CustomType> {
+  zero: ScopeZero<C>,
+  one: Option<ScopeOne<C>>,
+  later: Vec<ScopeLater<C>>,
   last_line: usize,
   collector: Collector
 }
 
-impl ScopeStack {
-  pub fn new() -> ScopeStack {
+impl<C: CustomType + 'static> ScopeStack<C> {
+  pub fn new() -> ScopeStack<C> {
     ScopeStack {
       zero: ScopeZero::known(HashMap::new()),
       one: None,
@@ -62,7 +62,7 @@ impl ScopeStack {
     }
   }
 
-  pub fn known(known_upvals: HashMap<String, (usize, Type)>) -> ScopeStack {
+  pub fn known(known_upvals: KnownUpvals<C>) -> ScopeStack<C> {
     ScopeStack {
       zero: ScopeZero::known(known_upvals),
       one: None,
@@ -72,7 +72,7 @@ impl ScopeStack {
     }
   }
 
-  pub fn link_build_depends(&mut self, index: &MorphIndex) { self.zero.link_build_depends(index); }
+  pub fn link_build_depends(&mut self, index: &MorphIndex<C>) { self.zero.link_build_depends(index); }
   pub fn collect(&mut self, token: Token) { self.collector.collect(token); }
 
   pub fn len(&self) -> usize {
@@ -86,7 +86,7 @@ impl ScopeStack {
   pub fn last_line(&self) -> usize { self.last_line }
   pub fn set_last_line(&mut self, last_line: usize) { self.last_line = last_line; }
 
-  pub fn add_constant(&mut self, v: Declared) -> usize {
+  pub fn add_constant(&mut self, v: Declared<C>) -> usize {
     if let Some(chunk) = self.current_chunk() {
       chunk.add_constant(v)
     } else {
@@ -101,7 +101,7 @@ impl ScopeStack {
     }
   }
 
-  pub fn emit_value(&mut self, v: Declared, vtype: Type) -> Type {
+  pub fn emit_value(&mut self, v: Declared<C>, vtype: Type<C>) -> Type<C> {
     let line = self.last_line;
     if let Some(chunk) = self.current_chunk() {
       let cc = chunk.add_constant(v);
@@ -112,7 +112,7 @@ impl ScopeStack {
     }
   }
 
-  pub fn emit_closure(&mut self, upvals: Vec<Upval>, function: Function) -> Arc<Function> {
+  pub fn emit_closure(&mut self, upvals: Vec<Upval>, function: Function<C>) -> Arc<Function<C>> {
     let line = self.last_line;
     if let Some(chunk) = self.current_chunk() {
       let function = Arc::new(function);
@@ -142,7 +142,7 @@ impl ScopeStack {
     }
   }
 
-  fn current_chunk(&mut self) -> Option<&mut Chunk> {
+  fn current_chunk(&mut self) -> Option<&mut Chunk<C>> {
     if self.len() == 1 {
       if let ZeroMode::Emitting(chunk) = &mut self.zero.mode {
         Some(chunk)
@@ -168,10 +168,10 @@ impl ScopeStack {
     }
   }
 
-  pub fn pop_scope_later(&mut self) -> ScopeLater { self.later.pop().unwrap() }
+  pub fn pop_scope_later(&mut self) -> ScopeLater<C> { self.later.pop().unwrap() }
 
   #[allow(clippy::let_and_return)]
-  pub fn pop_scope_one(&mut self) -> (ScopeOne, Vec<Token>) {
+  pub fn pop_scope_one(&mut self) -> (ScopeOne<C>, Vec<Token>) {
     if !self.later.is_empty() {
       panic!("Can't pop from scope > 2");
     } else if self.one.is_some() {
@@ -192,27 +192,27 @@ impl ScopeStack {
     // }
   }
 
-  pub fn pop_scope_zero(self) -> ScopeZero { self.zero }
+  pub fn pop_scope_zero(self) -> ScopeZero<C> { self.zero }
   pub fn add_local(&mut self, name: String) { self.locals_mut().add_local(Local::new(name)); }
 
-  pub fn resolve_local_at(&mut self, scope_ind: usize, name: &str) -> Option<(usize, Type)> {
+  pub fn resolve_local_at(&mut self, scope_ind: usize, name: &str) -> Option<(usize, Type<C>)> {
     self.locals_at_mut(scope_ind).resolve_local(name)
   }
 
-  pub fn resolve_local(&mut self, name: &str) -> Option<(usize, Type)> { self.locals_mut().resolve_local(name) }
-  pub fn mark_last_initialized(&mut self, vtype: Type) { self.locals_mut().mark_last_initialized(vtype); }
-  pub fn mark_initialized(&mut self, ind: usize, vtype: Type) { self.locals_mut().mark_initialized(ind, vtype); }
+  pub fn resolve_local(&mut self, name: &str) -> Option<(usize, Type<C>)> { self.locals_mut().resolve_local(name) }
+  pub fn mark_last_initialized(&mut self, vtype: Type<C>) { self.locals_mut().mark_last_initialized(vtype); }
+  pub fn mark_initialized(&mut self, ind: usize, vtype: Type<C>) { self.locals_mut().mark_initialized(ind, vtype); }
 
   fn set_captured_at(&mut self, scope_ind: usize, locals_ind: usize, captured: bool) {
     self.locals_at_mut(scope_ind).set_captured(locals_ind, captured);
   }
 
-  pub fn resolve_upval(&mut self, name: &str) -> Option<(usize, Type)> {
+  pub fn resolve_upval(&mut self, name: &str) -> Option<(usize, Type<C>)> {
     let scope_ind = self.len() - 1;
     self.resolve_upval_recurse(name, scope_ind)
   }
 
-  fn resolve_upval_recurse(&mut self, name: &str, scope_ind: usize) -> Option<(usize, Type)> {
+  fn resolve_upval_recurse(&mut self, name: &str, scope_ind: usize) -> Option<(usize, Type<C>)> {
     if scope_ind == 0 {
       return self.zero.pre_found_upval(name).cloned();
     }
@@ -256,7 +256,7 @@ impl ScopeStack {
     }
   }
 
-  fn locals_at_mut(&mut self, scope_ind: usize) -> &mut Locals {
+  fn locals_at_mut(&mut self, scope_ind: usize) -> &mut Locals<C> {
     if scope_ind == 0 {
       self.zero.locals_mut()
     } else if scope_ind == 1 {
@@ -276,31 +276,31 @@ impl ScopeStack {
   //   }
   // }
 
-  fn locals_mut(&mut self) -> &mut Locals { self.locals_at_mut(self.len() - 1) }
+  fn locals_mut(&mut self) -> &mut Locals<C> { self.locals_at_mut(self.len() - 1) }
   // fn locals(&self) -> &Locals { self.locals_at(self.len() - 1) }
 }
 
-pub struct ScopeZero {
-  mode: ZeroMode,
+pub struct ScopeZero<C: CustomType> {
+  mode: ZeroMode<C>,
 
   // read only
-  known_upvals: HashMap<String, (usize, Type)>,
+  known_upvals: KnownUpvals<C>,
 
   // common
-  locals: Locals
+  locals: Locals<C>
 }
 
-impl ScopeZero {
-  pub fn known(known_upvals: HashMap<String, (usize, Type)>) -> ScopeZero {
+impl<C: CustomType + 'static> ScopeZero<C> {
+  pub fn known(known_upvals: KnownUpvals<C>) -> ScopeZero<C> {
     ScopeZero { mode: ZeroMode::Emitting(Chunk::new()), known_upvals, locals: Locals::new() }
   }
 
   // fn locals(&self) -> &Locals { &self.locals }
-  fn locals_mut(&mut self) -> &mut Locals { &mut self.locals }
+  fn locals_mut(&mut self) -> &mut Locals<C> { &mut self.locals }
 
-  pub fn pre_found_upval(&self, name: &str) -> Option<&(usize, Type)> { self.known_upvals.get(name) }
+  pub fn pre_found_upval(&self, name: &str) -> Option<&(usize, Type<C>)> { self.known_upvals.get(name) }
 
-  fn flip_depends(&mut self) -> &mut Vec<MorphIndex> {
+  fn flip_depends(&mut self) -> &mut Vec<MorphIndex<C>> {
     if matches!(self.mode, ZeroMode::Emitting(_)) {
       self.mode = ZeroMode::Dependent(Vec::new());
     }
@@ -311,16 +311,16 @@ impl ScopeZero {
     }
   }
 
-  pub fn link_build_depends(&mut self, index: &MorphIndex) {
+  pub fn link_build_depends(&mut self, index: &MorphIndex<C>) {
     let depends = self.flip_depends();
     if !depends.contains(index) {
       depends.push(index.clone())
     }
   }
 
-  pub fn into_mode(self) -> ZeroMode { self.mode }
+  pub fn into_mode(self) -> ZeroMode<C> { self.mode }
 
-  pub fn into_chunk(self) -> Chunk {
+  pub fn into_chunk(self) -> Chunk<C> {
     match self.mode {
       ZeroMode::Emitting(chunk) => chunk,
       _ => panic!("Scope has dependencies.")
@@ -328,69 +328,69 @@ impl ScopeZero {
   }
 }
 
-pub enum ZeroMode {
-  Emitting(Chunk),
-  Dependent(Vec<MorphIndex>)
+pub enum ZeroMode<C: CustomType> {
+  Emitting(Chunk<C>),
+  Dependent(Vec<MorphIndex<C>>)
 }
 
-pub struct ScopeOne {
+pub struct ScopeOne<C: CustomType> {
   // by end of level 0 fn_sync, have captured `arity`, `code`, `name`, `upvals`
   // Function:
   //   arity: u8,
   //   code: Vec<Instr>,
   //   instances: Vec<(Vec<Type>, Chunk)>,
   //   name: Option<String>,
-  //   upvals: HashMap<String, (usize, Type)>
+  //   upvals: KnownUpvals<C>
 
   // by end of level 0 fn_sync, have captured `upvals`
   upvals: Vec<Upval>,
 
   // write only
-  known_upvals: HashMap<String, (usize, Type)>,
+  known_upvals: KnownUpvals<C>,
 
   // common
-  locals: Locals
+  locals: Locals<C>
 }
 
-impl ScopeOne {
-  pub fn new() -> ScopeOne { ScopeOne { upvals: Vec::new(), known_upvals: HashMap::new(), locals: Locals::new() } }
+impl<C: CustomType + 'static> ScopeOne<C> {
+  pub fn new() -> ScopeOne<C> { ScopeOne { upvals: Vec::new(), known_upvals: HashMap::new(), locals: Locals::new() } }
   // fn locals(&self) -> &Locals { &self.locals }
-  fn locals_mut(&mut self) -> &mut Locals { &mut self.locals }
+  fn locals_mut(&mut self) -> &mut Locals<C> { &mut self.locals }
 
-  pub fn add_upval(&mut self, name: impl ToString, index: usize, is_local: bool, utype: Type) -> usize {
+  pub fn add_upval(&mut self, name: impl ToString, index: usize, is_local: bool, utype: Type<C>) -> usize {
     match self.upvals.iter().position(|v| v.index() == index && v.is_local() == is_local) {
       Some(p) => p,
       None => self.push_upval(name.to_string(), Upval::new(index, is_local), utype)
     }
   }
 
-  fn push_upval(&mut self, name: String, upval: Upval, utype: Type) -> usize {
+  fn push_upval(&mut self, name: String, upval: Upval, utype: Type<C>) -> usize {
     self.upvals.push(upval);
     let ind = self.upvals.len() - 1;
     self.known_upvals.insert(name, (ind, utype));
     ind
   }
 
-  pub fn into_upvals(self) -> (Vec<Upval>, HashMap<String, (usize, Type)>) { (self.upvals, self.known_upvals) }
+  pub fn into_upvals(self) -> (Vec<Upval>, KnownUpvals<C>) { (self.upvals, self.known_upvals) }
 }
 
-pub struct ScopeLater {
-  locals: Locals
+pub struct ScopeLater<C: CustomType> {
+  locals: Locals<C>
 }
 
-impl ScopeLater {
-  pub fn new() -> ScopeLater { ScopeLater { locals: Locals::new() } }
+impl<C: CustomType + 'static> ScopeLater<C> {
+  pub fn new() -> ScopeLater<C> { ScopeLater { locals: Locals::new() } }
   // fn locals(&self) -> &Locals { &self.locals }
-  fn locals_mut(&mut self) -> &mut Locals { &mut self.locals }
+  fn locals_mut(&mut self) -> &mut Locals<C> { &mut self.locals }
 }
 
-struct Locals {
-  locals: Vec<Local>,
+struct Locals<C: CustomType> {
+  locals: Vec<Local<C>>,
   scope_depth: u16
 }
 
-impl Locals {
-  pub fn new() -> Locals { Locals { locals: vec![Local::new(String::new())], scope_depth: 0 } }
+impl<C: CustomType + 'static> Locals<C> {
+  pub fn new() -> Locals<C> { Locals { locals: vec![Local::new(String::new())], scope_depth: 0 } }
 
   pub fn incr_depth(&mut self) { self.scope_depth += 1; }
   pub fn decr_depth(&mut self) { self.scope_depth -= 1; }
@@ -401,7 +401,7 @@ impl Locals {
     }
   }
 
-  pub fn drain(&mut self) -> Vec<Local> {
+  pub fn drain(&mut self) -> Vec<Local<C>> {
     if let Some(p) = self.locals.iter().position(|l| l.depth() > self.scope_depth) {
       self.locals.split_off(p)
     } else {
@@ -409,7 +409,7 @@ impl Locals {
     }
   }
 
-  pub fn add_local(&mut self, local: Local) {
+  pub fn add_local(&mut self, local: Local<C>) {
     if self.is_defined(local.name()) {
       panic!("Already defined local variable \"{}\".", local.name());
     }
@@ -425,7 +425,7 @@ impl Locals {
     self.locals.iter().rev().take_while(|l| l.depth() >= self.scope_depth).any(|l| l.name() == name)
   }
 
-  pub fn resolve_local(&mut self, name: &str) -> Option<(usize, Type)> {
+  pub fn resolve_local(&mut self, name: &str) -> Option<(usize, Type<C>)> {
     let i = self.locals.iter_mut().enumerate().rev().find(|(_, l)| l.name() == name);
     match i {
       None => None,
@@ -444,14 +444,14 @@ impl Locals {
     }
   }
 
-  pub fn mark_initialized(&mut self, neg_ind: usize, utype: Type) {
+  pub fn mark_initialized(&mut self, neg_ind: usize, utype: Type<C>) {
     let locals_len = self.locals.len();
     let local = &mut self.locals[locals_len - neg_ind];
     local.depth = self.scope_depth;
     local.local_type = utype;
   }
 
-  pub fn mark_last_initialized(&mut self, utype: Type) {
+  pub fn mark_last_initialized(&mut self, utype: Type<C>) {
     self.mark_initialized(1, utype);
   }
 
@@ -459,21 +459,21 @@ impl Locals {
 }
 
 #[derive(Debug)]
-struct Local {
+struct Local<C: CustomType> {
   name: String,
   depth: u16,
   is_captured: bool,
-  local_type: Type,
+  local_type: Type<C>,
   used: usize,
 }
 
-impl Local {
-  pub fn new(name: String) -> Local { Local { name, depth: 0, is_captured: false, local_type: Type::Unset, used: 0 } }
+impl<C: CustomType> Local<C> {
+  pub fn new(name: String) -> Local<C> { Local { name, depth: 0, is_captured: false, local_type: Type::Unset, used: 0 } }
   pub fn name(&self) -> &str { &self.name }
   pub fn depth(&self) -> u16 { self.depth }
   pub fn is_captured(&self) -> bool { self.is_captured }
   pub fn set_captured(&mut self, cap: bool) { self.is_captured = cap }
-  pub fn local_type(&self) -> Type { self.local_type.clone() }
+  pub fn local_type(&self) -> Type<C> { self.local_type.clone() }
 
   pub fn incr_used(&mut self) -> usize {
     self.used += 1;
