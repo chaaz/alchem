@@ -21,6 +21,7 @@ impl Array {
   pub fn get(&self, ind: usize) -> &Type { self.types.get(ind).unwrap() }
   pub fn len(&self) -> usize { self.types.len() }
   pub fn add(&mut self, t: Type) { self.types.push(t); }
+  pub fn is_single_use(&self) -> bool { self.types.iter().any(|v| v.is_single_use()) }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -40,6 +41,7 @@ impl Object {
   pub fn index_of(&self, key: &str) -> Option<usize> { self.indexes.iter().position(|k| k == key) }
   pub fn get(&self, key: &str) -> &Type { self.types.get(key).unwrap() }
   pub fn len(&self) -> usize { self.indexes.len() }
+  pub fn is_single_use(&self) -> bool { self.types.values().any(|v| v.is_single_use()) }
 
   pub fn add(&mut self, key: String, t: Type) {
     self.types.insert(key, t);
@@ -84,6 +86,16 @@ impl Type {
 
   pub fn depends(func: &Arc<Function>, inst_ind: usize) -> Type {
     Type::DependsOn(DependsOn::unit(MorphIndex::weak(func, inst_ind)))
+  }
+
+  pub fn is_single_use(&self) -> bool {
+    match self {
+      Self::Object(o) => o.is_single_use(),
+      Self::Array(a) => a.is_single_use(),
+      Self::FnSync(f) => f.upgrade().unwrap().is_single_use(),
+      Self::String => true,
+      _ => false,
+    }
   }
 
   pub fn into_depends(self) -> DependsOn {

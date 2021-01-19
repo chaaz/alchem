@@ -195,11 +195,11 @@ impl ScopeStack {
   pub fn pop_scope_zero(self) -> ScopeZero { self.zero }
   pub fn add_local(&mut self, name: String) { self.locals_mut().add_local(Local::new(name)); }
 
-  pub fn resolve_local_at(&self, scope_ind: usize, name: &str) -> Option<(usize, Type)> {
-    self.locals_at(scope_ind).resolve_local(name)
+  pub fn resolve_local_at(&mut self, scope_ind: usize, name: &str) -> Option<(usize, Type)> {
+    self.locals_at_mut(scope_ind).resolve_local(name)
   }
 
-  pub fn resolve_local(&self, name: &str) -> Option<(usize, Type)> { self.locals().resolve_local(name) }
+  pub fn resolve_local(&mut self, name: &str) -> Option<(usize, Type)> { self.locals_mut().resolve_local(name) }
   pub fn mark_last_initialized(&mut self, vtype: Type) { self.locals_mut().mark_last_initialized(vtype); }
   pub fn mark_initialized(&mut self, ind: usize, vtype: Type) { self.locals_mut().mark_initialized(ind, vtype); }
 
@@ -266,18 +266,18 @@ impl ScopeStack {
     }
   }
 
-  fn locals_at(&self, scope_ind: usize) -> &Locals {
-    if scope_ind == 0 {
-      self.zero.locals()
-    } else if scope_ind == 1 {
-      self.one.as_ref().unwrap().locals()
-    } else {
-      self.later[scope_ind - 2].locals()
-    }
-  }
+  // fn locals_at(&self, scope_ind: usize) -> &Locals {
+  //   if scope_ind == 0 {
+  //     self.zero.locals()
+  //   } else if scope_ind == 1 {
+  //     self.one.as_ref().unwrap().locals()
+  //   } else {
+  //     self.later[scope_ind - 2].locals()
+  //   }
+  // }
 
   fn locals_mut(&mut self) -> &mut Locals { self.locals_at_mut(self.len() - 1) }
-  fn locals(&self) -> &Locals { self.locals_at(self.len() - 1) }
+  // fn locals(&self) -> &Locals { self.locals_at(self.len() - 1) }
 }
 
 pub struct ScopeZero {
@@ -295,7 +295,7 @@ impl ScopeZero {
     ScopeZero { mode: ZeroMode::Emitting(Chunk::new()), known_upvals, locals: Locals::new() }
   }
 
-  fn locals(&self) -> &Locals { &self.locals }
+  // fn locals(&self) -> &Locals { &self.locals }
   fn locals_mut(&mut self) -> &mut Locals { &mut self.locals }
 
   pub fn pre_found_upval(&self, name: &str) -> Option<&(usize, Type)> { self.known_upvals.get(name) }
@@ -354,7 +354,7 @@ pub struct ScopeOne {
 
 impl ScopeOne {
   pub fn new() -> ScopeOne { ScopeOne { upvals: Vec::new(), known_upvals: HashMap::new(), locals: Locals::new() } }
-  fn locals(&self) -> &Locals { &self.locals }
+  // fn locals(&self) -> &Locals { &self.locals }
   fn locals_mut(&mut self) -> &mut Locals { &mut self.locals }
 
   pub fn add_upval(&mut self, name: impl ToString, index: usize, is_local: bool, utype: Type) -> usize {
@@ -380,7 +380,7 @@ pub struct ScopeLater {
 
 impl ScopeLater {
   pub fn new() -> ScopeLater { ScopeLater { locals: Locals::new() } }
-  fn locals(&self) -> &Locals { &self.locals }
+  // fn locals(&self) -> &Locals { &self.locals }
   fn locals_mut(&mut self) -> &mut Locals { &mut self.locals }
 }
 
@@ -425,13 +425,18 @@ impl Locals {
     self.locals.iter().rev().take_while(|l| l.depth() >= self.scope_depth).any(|l| l.name() == name)
   }
 
-  pub fn resolve_local(&self, name: &str) -> Option<(usize, Type)> {
-    let i = self.locals.iter().enumerate().rev().find(|(_, l)| l.name() == name);
+  pub fn resolve_local(&mut self, name: &str) -> Option<(usize, Type)> {
+    let i = self.locals.iter_mut().enumerate().rev().find(|(_, l)| l.name() == name);
     match i {
       None => None,
       Some((i, local)) => {
-        if self.initialized(i) {
-          Some((i, local.local_type()))
+        if local.is_initialized() {
+          let ltype = local.local_type();
+          let used = local.incr_used();
+          if ltype.is_single_use() && used > 1 {
+            panic!("Can't use variable \"{}\" more than once.", name);
+          }
+          Some((i, ltype))
         } else {
           panic!("Can't read local \"{}\" in its own initializer.", name)
         }
@@ -450,11 +455,6 @@ impl Locals {
     self.mark_initialized(1, utype);
   }
 
-  pub fn initialized(&self, index: usize) -> bool {
-    let local = &self.locals[index];
-    local.depth > 0
-  }
-
   pub fn set_captured(&mut self, locals_ind: usize, captured: bool) { self.locals[locals_ind].set_captured(captured); }
 }
 
@@ -463,14 +463,22 @@ struct Local {
   name: String,
   depth: u16,
   is_captured: bool,
-  local_type: Type
+  local_type: Type,
+  used: usize,
 }
 
 impl Local {
-  pub fn new(name: String) -> Local { Local { name, depth: 0, is_captured: false, local_type: Type::Unset } }
+  pub fn new(name: String) -> Local { Local { name, depth: 0, is_captured: false, local_type: Type::Unset, used: 0 } }
   pub fn name(&self) -> &str { &self.name }
   pub fn depth(&self) -> u16 { self.depth }
   pub fn is_captured(&self) -> bool { self.is_captured }
   pub fn set_captured(&mut self, cap: bool) { self.is_captured = cap }
   pub fn local_type(&self) -> Type { self.local_type.clone() }
+
+  pub fn incr_used(&mut self) -> usize {
+    self.used += 1;
+    self.used
+  }
+
+  pub fn is_initialized(&self) -> bool { self.depth > 0 }
 }

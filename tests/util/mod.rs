@@ -20,6 +20,7 @@ pub async fn expectn<V: Into<Value>>(script: &str, expected: V) {
   add_native(&mut globals, "fourty_two", 0, ntv_number, ntvt_number);
   add_native(&mut globals, "recall", 1, ntv_recall, ntvt_recall);
   add_native(&mut globals, "recall_1", 2, ntv_recall_1, ntvt_recall_1);
+  add_native(&mut globals, "reloop", 1, ntv_reloop, ntvt_reloop);
 
   assert_eq!(vm.interpret(script, globals).await, expected.into());
 }
@@ -87,4 +88,29 @@ async fn ntv_recall_1(vals: Vec<Value>, info: NativeInfo, runner: &mut Runner) -
   let a = vals.next().unwrap();
   let inst_ind = info.call_indexes()[0];
   runner.run_value(f, inst_ind, vec![a]).await
+}
+
+fn ntvt_reloop(args: Vec<Type>, globals: &Globals) -> MorphStatus {
+  assert_eq!(args.len(), 1);
+  let func = args[0].as_function().upgrade().unwrap();
+  assert_eq!(func.arity(), 0);
+  assert!(!func.is_single_use());
+  let (inst_ind, ftype) = func.find_or_build(Vec::new(), globals);
+
+  if let Some(ftype) = ftype {
+    let mut info = NativeInfo::new();
+    info.add_call_index(inst_ind);
+    MorphStatus::NativeCompleted(info, ftype)
+  } else {
+    MorphStatus::Known(Type::depends(&func, inst_ind))
+  }
+}
+
+#[macro_rules_attribute(native_fn!)]
+async fn ntv_reloop(vals: Vec<Value>, info: NativeInfo, runner: &mut Runner) -> Value {
+  let mut vals = vals;
+  let mut f = vals.remove(0);
+  let inst_ind = info.call_indexes()[0];
+  let _ = runner.run_value(f.shift(), inst_ind, Vec::new()).await;
+  runner.run_value(f, inst_ind, Vec::new()).await
 }

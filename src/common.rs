@@ -73,6 +73,7 @@ impl Function {
     }
   }
 
+  pub fn is_single_use(&self) -> bool { self.known_upvals.values().any(|(_, t)| t.is_single_use()) }
   pub fn into_collapse(self) -> (u8, Vec<Monomorph>) { (self.arity, self.instances.into_inner().unwrap()) }
   pub fn fn_type(&self) -> &FnType { &self.fn_type }
   pub fn arity(&self) -> u8 { self.arity }

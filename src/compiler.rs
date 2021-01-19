@@ -687,7 +687,7 @@ impl<'g> Compiler<'g> {
   fn declare_variable(&mut self, name: String) { self.scope.add_local(name); }
   fn mark_initialized(&mut self, ind: usize, vtype: Type) { self.scope.mark_initialized(ind, vtype); }
   fn mark_last_initialized(&mut self, vtype: Type) { self.scope.mark_last_initialized(vtype); }
-  fn resolve_local(&self, name: &str) -> Option<(usize, Type)> { self.scope.resolve_local(name) }
+  fn resolve_local(&mut self, name: &str) -> Option<(usize, Type)> { self.scope.resolve_local(name) }
   fn resolve_upval(&mut self, name: &str) -> Option<(usize, Type)> { self.scope.resolve_upval(name) }
   fn begin_scope(&mut self) { self.scope.begin_scope() }
   fn end_scope(&mut self) { self.scope.end_scope() }
