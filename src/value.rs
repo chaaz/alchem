@@ -7,6 +7,7 @@ use std::cmp::PartialEq;
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
+use serde_json::{Number, Value as Json};
 
 pub use crate::common::{Function, Globals, MorphStatus, NativeInfo};
 pub use crate::types::{Type, NoCustom};
@@ -29,6 +30,7 @@ pub enum Value {
   Array(Vec<Value>),
   Closure(Arc<Closure>),
   Native(Arc<FuncNative>),
+  Json(Json),
   Void
 }
 
@@ -42,6 +44,7 @@ impl PartialEq for Value {
       (Self::Closure(v1), Self::Closure(v2)) => Arc::ptr_eq(v1, v2),
       (Self::Native(v1), Self::Native(v2)) => Arc::ptr_eq(v1, v2),
       (Self::Array(v1), Self::Array(v2)) => v1 == v2,
+      (Self::Json(a), Self::Json(b)) => a == b,
       (Self::Void, Self::Void) => true,
       _ => false
     }
@@ -58,6 +61,7 @@ impl fmt::Debug for Value {
       Self::Closure(v) => write!(f, "{:?}", v),
       Self::Native(v) => write!(f, "{:?}", v),
       Self::Array(_) => write!(f, "(array)"),
+      Self::Json(v) => write!(f, "{:?}", v),
       Self::Void => write!(f, "(void)")
     }
   }
@@ -133,6 +137,7 @@ impl Value {
       Self::Closure(v) => Self::Closure(v.clone()),
       Self::Native(v) => Self::Native(v.clone()),
       Self::Array(v) => Self::Array(v.iter_mut().map(|v| v.shift()).collect()),
+      Self::Json(v) => Self::Json(v.clone()),
       Self::Void => panic!("Cannot access an evaculated value.")
     }
   }
@@ -141,6 +146,11 @@ impl Value {
     match self {
       Self::Float(v) => Self::Float(-*v),
       Self::Int(v) => Self::Int(-*v),
+      Self::Json(Json::Number(n)) if n.is_u64() => Self::Json(Json::Number((-(n.as_u64().unwrap() as i64)).into())),
+      Self::Json(Json::Number(n)) if n.is_i64() => Self::Json(Json::Number((-n.as_i64().unwrap()).into())),
+      Self::Json(Json::Number(n)) if n.is_f64() => {
+        Self::Json(Json::Number(Number::from_f64(-n.as_f64().unwrap()).unwrap()))
+      }
       _ => panic!("No negation for {:?}", self)
     }
   }
@@ -148,6 +158,7 @@ impl Value {
   pub fn op_not(&self) -> Value {
     match self {
       Self::Bool(v) => Self::Bool(!*v),
+      Self::Json(Json::Bool(n)) => Self::Json(Json::Bool(!n)),
       _ => panic!("No negation for {:?}", self)
     }
   }
@@ -156,11 +167,15 @@ impl Value {
     match (self, other) {
       (Self::Float(v1), Value::Float(v2)) => Self::Float(v1 + v2),
       (Self::Int(v1), Value::Int(v2)) => Self::Int(v1 + v2),
-      (Self::String(v1), Value::String(v2)) => {
-        let mut s = v1.to_string();
-        s.push_str(&v2);
-        Self::String(s.into())
-      }
+      (Self::String(v1), Value::String(v2)) => Self::String(concat(v1, v2).into()),
+      (Self::Int(a), Self::Json(Json::Number(b))) => Self::Json(Json::Number(Number::from_f64(*a as f64 + b.as_f64().unwrap()).unwrap())),
+      (Self::Float(a), Self::Json(Json::Number(b))) => Self::Json(Json::Number(Number::from_f64(*a as f64 + b.as_f64().unwrap()).unwrap())),
+      (Self::Json(Json::Number(a)), Self::Int(b)) => Self::Json(Json::Number(Number::from_f64(a.as_f64().unwrap() + *b as f64).unwrap())),
+      (Self::Json(Json::Number(a)), Self::Float(b)) => Self::Json(Json::Number(Number::from_f64(a.as_f64().unwrap() + *b as f64).unwrap())),
+      (Self::Json(Json::Number(a)), Self::Json(Json::Number(b))) => Self::Json(Json::Number(Number::from_f64(a.as_f64().unwrap() + b.as_f64().unwrap()).unwrap())),
+      (Self::String(a), Self::Json(Json::String(b))) => Self::Json(Json::String(concat(a, b))),
+      (Self::Json(Json::String(a)), Self::String(b)) => Self::Json(Json::String(concat(a, b))),
+      (Self::Json(Json::String(a)), Self::Json(Json::String(b))) => Self::Json(Json::String(concat(a, b))),
       (o1, o2) => panic!("Can't add mismatch types: {:?}, {:?}", o1, o2)
     }
   }
@@ -169,6 +184,11 @@ impl Value {
     match (self, other) {
       (Self::Float(v1), Value::Float(v2)) => Self::Float(v1 - v2),
       (Self::Int(v1), Value::Int(v2)) => Self::Int(v1 - v2),
+      (Self::Int(a), Self::Json(Json::Number(b))) => Self::Json(Json::Number(Number::from_f64(*a as f64 - b.as_f64().unwrap()).unwrap())),
+      (Self::Float(a), Self::Json(Json::Number(b))) => Self::Json(Json::Number(Number::from_f64(*a as f64 - b.as_f64().unwrap()).unwrap())),
+      (Self::Json(Json::Number(a)), Self::Int(b)) => Self::Json(Json::Number(Number::from_f64(a.as_f64().unwrap() - *b as f64).unwrap())),
+      (Self::Json(Json::Number(a)), Self::Float(b)) => Self::Json(Json::Number(Number::from_f64(a.as_f64().unwrap() - *b as f64).unwrap())),
+      (Self::Json(Json::Number(a)), Self::Json(Json::Number(b))) => Self::Json(Json::Number(Number::from_f64(a.as_f64().unwrap() - b.as_f64().unwrap()).unwrap())),
       (o1, o2) => panic!("Can't subtract mismatch types: {:?}, {:?}", o1, o2)
     }
   }
@@ -177,6 +197,11 @@ impl Value {
     match (self, other) {
       (Self::Float(v1), Value::Float(v2)) => Self::Float(v1 * v2),
       (Self::Int(v1), Value::Int(v2)) => Self::Int(v1 * v2),
+      (Self::Int(a), Self::Json(Json::Number(b))) => Self::Json(Json::Number(Number::from_f64(*a as f64 * b.as_f64().unwrap()).unwrap())),
+      (Self::Float(a), Self::Json(Json::Number(b))) => Self::Json(Json::Number(Number::from_f64(*a as f64 * b.as_f64().unwrap()).unwrap())),
+      (Self::Json(Json::Number(a)), Self::Int(b)) => Self::Json(Json::Number(Number::from_f64(a.as_f64().unwrap() * *b as f64).unwrap())),
+      (Self::Json(Json::Number(a)), Self::Float(b)) => Self::Json(Json::Number(Number::from_f64(a.as_f64().unwrap() * *b as f64).unwrap())),
+      (Self::Json(Json::Number(a)), Self::Json(Json::Number(b))) => Self::Json(Json::Number(Number::from_f64(a.as_f64().unwrap() * b.as_f64().unwrap()).unwrap())),
       (o1, o2) => panic!("Can't multiply mismatch types: {:?}, {:?}", o1, o2)
     }
   }
@@ -185,6 +210,11 @@ impl Value {
     match (self, other) {
       (Self::Float(v1), Value::Float(v2)) => Self::Float(v1 / v2),
       (Self::Int(v1), Value::Int(v2)) => Self::Int(v1 / v2),
+      (Self::Int(a), Self::Json(Json::Number(b))) => Self::Json(Json::Number(Number::from_f64(*a as f64 / b.as_f64().unwrap()).unwrap())),
+      (Self::Float(a), Self::Json(Json::Number(b))) => Self::Json(Json::Number(Number::from_f64(*a as f64 / b.as_f64().unwrap()).unwrap())),
+      (Self::Json(Json::Number(a)), Self::Int(b)) => Self::Json(Json::Number(Number::from_f64(a.as_f64().unwrap() / *b as f64).unwrap())),
+      (Self::Json(Json::Number(a)), Self::Float(b)) => Self::Json(Json::Number(Number::from_f64(a.as_f64().unwrap() / *b as f64).unwrap())),
+      (Self::Json(Json::Number(a)), Self::Json(Json::Number(b))) => Self::Json(Json::Number(Number::from_f64(a.as_f64().unwrap() / b.as_f64().unwrap()).unwrap())),
       (o1, o2) => panic!("Can't divide mismatch types: {:?}, {:?}", o1, o2)
     }
   }
@@ -193,6 +223,11 @@ impl Value {
     match (self, other) {
       (Self::Float(v1), Value::Float(v2)) => Self::Float(v1 % v2),
       (Self::Int(v1), Value::Int(v2)) => Self::Int(v1 % v2),
+      (Self::Int(a), Self::Json(Json::Number(b))) => Self::Json(Json::Number(Number::from_f64(*a as f64 % b.as_f64().unwrap()).unwrap())),
+      (Self::Float(a), Self::Json(Json::Number(b))) => Self::Json(Json::Number(Number::from_f64(*a as f64 % b.as_f64().unwrap()).unwrap())),
+      (Self::Json(Json::Number(a)), Self::Int(b)) => Self::Json(Json::Number(Number::from_f64(a.as_f64().unwrap() % *b as f64).unwrap())),
+      (Self::Json(Json::Number(a)), Self::Float(b)) => Self::Json(Json::Number(Number::from_f64(a.as_f64().unwrap() % *b as f64).unwrap())),
+      (Self::Json(Json::Number(a)), Self::Json(Json::Number(b))) => Self::Json(Json::Number(Number::from_f64(a.as_f64().unwrap() % b.as_f64().unwrap()).unwrap())),
       (o1, o2) => panic!("Can't divide mismatch types: {:?}, {:?}", o1, o2)
     }
   }
@@ -201,6 +236,11 @@ impl Value {
     match (self, other) {
       (Self::Float(v1), Value::Float(v2)) => Self::Bool(v1 > v2),
       (Self::Int(v1), Value::Int(v2)) => Self::Bool(v1 > v2),
+      (Self::Int(a), Self::Json(Json::Number(b))) => Self::Json(Json::Bool(*a as f64 > b.as_f64().unwrap())),
+      (Self::Float(a), Self::Json(Json::Number(b))) => Self::Json(Json::Bool(*a as f64 > b.as_f64().unwrap())),
+      (Self::Json(Json::Number(a)), Self::Int(b)) => Self::Json(Json::Bool(a.as_f64().unwrap() > *b as f64)),
+      (Self::Json(Json::Number(a)), Self::Float(b)) => Self::Json(Json::Bool(a.as_f64().unwrap() > *b as f64)),
+      (Self::Json(Json::Number(a)), Self::Json(Json::Number(b))) => Self::Json(Json::Bool(a.as_f64().unwrap() > b.as_f64().unwrap())),
       (o1, o2) => panic!("Can't compare types: {:?}, {:?}", o1, o2)
     }
   }
@@ -209,6 +249,11 @@ impl Value {
     match (self, other) {
       (Self::Float(v1), Value::Float(v2)) => Self::Bool(v1 >= v2),
       (Self::Int(v1), Value::Int(v2)) => Self::Bool(v1 >= v2),
+      (Self::Int(a), Self::Json(Json::Number(b))) => Self::Json(Json::Bool(*a as f64 >= b.as_f64().unwrap())),
+      (Self::Float(a), Self::Json(Json::Number(b))) => Self::Json(Json::Bool(*a as f64 >= b.as_f64().unwrap())),
+      (Self::Json(Json::Number(a)), Self::Int(b)) => Self::Json(Json::Bool(a.as_f64().unwrap() >= *b as f64)),
+      (Self::Json(Json::Number(a)), Self::Float(b)) => Self::Json(Json::Bool(a.as_f64().unwrap() >= *b as f64)),
+      (Self::Json(Json::Number(a)), Self::Json(Json::Number(b))) => Self::Json(Json::Bool(a.as_f64().unwrap() >= b.as_f64().unwrap())),
       (o1, o2) => panic!("Can't compare types: {:?}, {:?}", o1, o2)
     }
   }
@@ -217,6 +262,11 @@ impl Value {
     match (self, other) {
       (Self::Float(v1), Value::Float(v2)) => Self::Bool(v1 < v2),
       (Self::Int(v1), Value::Int(v2)) => Self::Bool(v1 < v2),
+      (Self::Int(a), Self::Json(Json::Number(b))) => Self::Json(Json::Bool((*a as f64) < b.as_f64().unwrap())),
+      (Self::Float(a), Self::Json(Json::Number(b))) => Self::Json(Json::Bool((*a as f64) < b.as_f64().unwrap())),
+      (Self::Json(Json::Number(a)), Self::Int(b)) => Self::Json(Json::Bool(a.as_f64().unwrap() < *b as f64)),
+      (Self::Json(Json::Number(a)), Self::Float(b)) => Self::Json(Json::Bool(a.as_f64().unwrap() < *b as f64)),
+      (Self::Json(Json::Number(a)), Self::Json(Json::Number(b))) => Self::Json(Json::Bool(a.as_f64().unwrap() < b.as_f64().unwrap())),
       (o1, o2) => panic!("Can't compare types: {:?}, {:?}", o1, o2)
     }
   }
@@ -225,33 +275,42 @@ impl Value {
     match (self, other) {
       (Self::Float(v1), Value::Float(v2)) => Self::Bool(v1 <= v2),
       (Self::Int(v1), Value::Int(v2)) => Self::Bool(v1 <= v2),
+      (Self::Int(a), Self::Json(Json::Number(b))) => Self::Json(Json::Bool(*a as f64 <= b.as_f64().unwrap())),
+      (Self::Float(a), Self::Json(Json::Number(b))) => Self::Json(Json::Bool(*a as f64 <= b.as_f64().unwrap())),
+      (Self::Json(Json::Number(a)), Self::Int(b)) => Self::Json(Json::Bool(a.as_f64().unwrap() <= *b as f64)),
+      (Self::Json(Json::Number(a)), Self::Float(b)) => Self::Json(Json::Bool(a.as_f64().unwrap() <= *b as f64)),
+      (Self::Json(Json::Number(a)), Self::Json(Json::Number(b))) => Self::Json(Json::Bool(a.as_f64().unwrap() <= b.as_f64().unwrap())),
       (o1, o2) => panic!("Can't compare types: {:?}, {:?}", o1, o2)
     }
   }
 
   pub fn op_eq(&self, other: &Value) -> Value {
     match (self, other) {
-      (Self::Float(v1), Value::Float(v2)) => Self::Bool((v1 - v2).abs() < f64::EPSILON),
+      (Self::Float(v1), Value::Float(v2)) => Self::Bool(is_eq(*v1, *v2)),
       (Self::Int(v1), Value::Int(v2)) => Self::Bool(v1 == v2),
-      (Self::Bool(v1), Value::Bool(v2)) => Self::Bool(v1 == v2),
+      (Self::Int(a), Self::Json(Json::Number(b))) => Self::Json(Json::Bool(is_eq(*a as f64, b.as_f64().unwrap()))),
+      (Self::Float(a), Self::Json(Json::Number(b))) => Self::Json(Json::Bool(is_eq(*a as f64, b.as_f64().unwrap()))),
+      (Self::Json(Json::Number(a)), Self::Int(b)) => Self::Json(Json::Bool(is_eq(a.as_f64().unwrap(), *b as f64))),
+      (Self::Json(Json::Number(a)), Self::Float(b)) => Self::Json(Json::Bool(is_eq(a.as_f64().unwrap(), *b as f64))),
+      (Self::Json(Json::Number(a)), Self::Json(Json::Number(b))) => Self::Json(Json::Bool(is_eq(a.as_f64().unwrap(), b.as_f64().unwrap()))),
       (Self::String(v1), Value::String(v2)) => Self::Bool(v1 == v2),
+      (Self::Json(Json::String(a)), Self::String(b)) => Self::Bool(a.as_str() == b.as_ref()),
+      (Self::String(a), Self::Json(Json::String(b))) => Self::Bool(a.as_ref() == b.as_str()),
+      (Self::Bool(v1), Value::Bool(v2)) => Self::Bool(v1 == v2),
+      (Self::Bool(a), Self::Json(Json::Bool(b))) => Self::Bool(a == b),
+      (Self::Json(Json::Bool(a)), Self::Bool(b)) => Self::Bool(a == b),
       (o1, o2) => panic!("Can't compare types: {:?}, {:?}", o1, o2)
     }
   }
 
-  pub fn op_neq(&self, other: &Value) -> Value {
-    match (self, other) {
-      (Self::Float(v1), Value::Float(v2)) => Self::Bool((v1 - v2).abs() >= f64::EPSILON),
-      (Self::Int(v1), Value::Int(v2)) => Self::Bool(v1 != v2),
-      (Self::Bool(v1), Value::Bool(v2)) => Self::Bool(v1 != v2),
-      (Self::String(v1), Value::String(v2)) => Self::Bool(v1 != v2),
-      (o1, o2) => panic!("Can't compare types: {:?}, {:?}", o1, o2)
-    }
-  }
+  pub fn op_neq(&self, other: &Value) -> Value { Value::Bool(!self.op_eq(other).as_bool()) }
 
   pub fn op_and(&self, other: &Value) -> Value {
     match (self, other) {
       (Self::Bool(v1), Value::Bool(v2)) => Self::Bool(*v1 && *v2),
+      (Self::Bool(v1), Value::Json(Json::Bool(v2))) => Self::Json(Json::Bool(*v1 && *v2)),
+      (Value::Json(Json::Bool(v1)), Self::Bool(v2)) => Self::Json(Json::Bool(*v1 && *v2)),
+      (Value::Json(Json::Bool(v1)), Self::Json(Json::Bool(v2))) => Self::Json(Json::Bool(*v1 && *v2)),
       (o1, o2) => panic!("Can't compare types: {:?}, {:?}", o1, o2)
     }
   }
@@ -259,6 +318,9 @@ impl Value {
   pub fn op_or(&self, other: &Value) -> Value {
     match (self, other) {
       (Self::Bool(v1), Value::Bool(v2)) => Self::Bool(*v1 || *v2),
+      (Self::Bool(v1), Value::Json(Json::Bool(v2))) => Self::Json(Json::Bool(*v1 || *v2)),
+      (Value::Json(Json::Bool(v1)), Self::Bool(v2)) => Self::Json(Json::Bool(*v1 || *v2)),
+      (Value::Json(Json::Bool(v1)), Self::Json(Json::Bool(v2))) => Self::Json(Json::Bool(*v1 || *v2)),
       (o1, o2) => panic!("Can't compare types: {:?}, {:?}", o1, o2)
     }
   }
@@ -320,6 +382,10 @@ impl<C: CustomType> Declared<C> {
     }
   }
 }
+
+fn concat(v1: &impl ToString, v2: &impl ToString) -> String { format!("{}{}", v1.to_string(), v2.to_string()) }
+
+fn is_eq(v1: f64, v2: f64) -> bool { (v1 - v2).abs() < f64::EPSILON }
 
 // convert
 //

@@ -62,6 +62,7 @@ where
   Object(Arc<Object<C>>),
   Array(Arc<Array<C>>),
   FnSync(Weak<Function<C>>), // Weak, so that we can collapse functions later.
+  Json,
   Custom(C),
   Unset,
   DependsOn(DependsOn<C>)
@@ -75,6 +76,7 @@ impl<C: CustomType> PartialEq for Type<C> {
       (Self::String, Self::String) => true,
       (Self::FnSync(a), Self::FnSync(b)) => Weak::ptr_eq(a, b),
       (Self::Unset, Self::Unset) => true,
+      (Self::Json, Self::Json) => true,
       (Self::Object(a), Self::Object(b)) => a == b,
       (Self::Array(a), Self::Array(b)) => a == b,
       (Self::Custom(a), Self::Custom(b)) => a == b,
@@ -107,6 +109,8 @@ where
       _ => false,
     }
   }
+
+  pub fn is_json(&self) -> bool { matches!(self, Self::Json) }
 
   pub fn as_custom(&self) -> &C {
     match self {

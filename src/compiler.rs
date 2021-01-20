@@ -596,7 +596,7 @@ where
     // At level 1, we can accept unknown types, but not unset or mismatched types.
     assert!(ltype != &Type::Unset);
     assert!(rtype != Type::Unset);
-    assert!(!ltype.is_known() || !rtype.is_known() || ltype == &rtype);
+    assert!(!ltype.is_known() || !rtype.is_known() || ltype.is_json() || rtype.is_json() || ltype == &rtype);
 
     match ttd {
       TokenTypeDiscr::Minus
@@ -607,13 +607,13 @@ where
       | TokenTypeDiscr::Lt
       | TokenTypeDiscr::Gte
       | TokenTypeDiscr::Lte => {
-        assert!(!ltype.is_known() || ltype == &Type::Number)
+        assert!(!ltype.is_known() || ltype.is_json() || ltype == &Type::Number)
       }
       TokenTypeDiscr::Plus => {
-        assert!(!ltype.is_known() || ltype == &Type::Number || ltype == &Type::String)
+        assert!(!ltype.is_known() || ltype.is_json() || ltype == &Type::Number || ltype == &Type::String)
       }
       TokenTypeDiscr::DoubleEq | TokenTypeDiscr::NotEq => {
-        assert!(!ltype.is_known() || ltype == &Type::Number || ltype == &Type::String || ltype == &Type::Bool)
+        assert!(!ltype.is_known() || ltype.is_json() || ltype == &Type::Number || ltype == &Type::String || ltype == &Type::Bool)
       }
       _ => ()
     }
@@ -625,12 +625,14 @@ where
       | TokenTypeDiscr::Lt
       | TokenTypeDiscr::Gte
       | TokenTypeDiscr::Lte => {
-        if ltype.is_known() && rtype.is_known() {
-          rtype = Type::Bool;
-        } else if ltype.is_depends() && rtype.is_depends() {
+        if ltype.is_depends() && rtype.is_depends() {
           rtype = rtype.and_depends(ltype.clone());
         } else if ltype.is_depends() {
           rtype = ltype.clone();
+        } else if !rtype.is_depends() && ltype.is_known() && rtype.is_known() && !ltype.is_json() && !rtype.is_json() {
+          rtype = Type::Bool;
+        } else if !rtype.is_depends() && ltype.is_json() {
+          rtype = Type::Json;
         }
       }
       _ => ()
