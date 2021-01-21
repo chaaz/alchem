@@ -563,14 +563,32 @@ where
     match self.previous.token_type() {
       TokenType::Identifier(s) => {
         let name = s.to_string();
-        let ind = ltype.as_object().index_of(&name).unwrap_or_else(|| panic!("No such index for \"{}\".", name));
-        self.emit_instr(Opcode::GetIndex(ind));
-        ltype.as_object().get(&name).clone()
+        match ltype {
+          Type::Object(o) => {
+            let ind = o.index_of(&name).unwrap_or_else(|| panic!("No such index for \"{}\".", name));
+            self.emit_instr(Opcode::GetIndex(ind));
+            o.get(&name).clone()
+          }
+          Type::Json => {
+            self.emit_instr(Opcode::GetJsonKey(name));
+            ltype.clone()
+          }
+          other => panic!("Not keyed: {:?}", other)
+        }
       }
       TokenType::IntLit(s) => {
         let ind = s.parse().unwrap();
-        self.emit_instr(Opcode::GetIndex(ind));
-        ltype.as_array().get(ind).clone()
+        match ltype {
+          Type::Array(a) => {
+            self.emit_instr(Opcode::GetIndex(ind));
+            a.get(ind).clone()
+          }
+          Type::Json => {
+            self.emit_instr(Opcode::GetJsonIndex(ind));
+            ltype.clone()
+          }
+          other => panic!("Not indexable: {:?}", other)
+        }
       }
       other => panic!("Unknown dot argument {:?}.", other)
     }

@@ -23,9 +23,7 @@ pub async fn ntv_print(vals: Vec<Val>, _info: Info, _runner: &mut Run) -> Val {
   Value::Int(1)
 }
 
-pub fn ntvt_number(_: Vec<Tp>, _: &Gl) -> Status {
-  MorphStatus::NativeCompleted(NativeInfo::new(), Type::Number)
-}
+pub fn ntvt_number(_: Vec<Tp>, _: &Gl) -> Status { MorphStatus::NativeCompleted(NativeInfo::new(), Type::Number) }
 
 #[macro_rules_attribute(native_fn!)]
 pub async fn ntv_number(_argv: Vec<Val>, _info: Info, _runner: &mut Run) -> Val { Value::Int(42) }
@@ -79,17 +77,17 @@ pub async fn ntv_recall_1(vals: Vec<Val>, info: Info, runner: &mut Run) -> Val {
 
 pub fn ntvt_reloop(args: Vec<Tp>, globals: &Gl) -> Status {
   assert_eq!(args.len(), 1);
-  let func = args[0].as_function().upgrade().unwrap();
-  assert_eq!(func.arity(), 0);
-  assert!(!func.is_single_use());
-  let (inst_ind, ftype) = func.find_or_build(Vec::new(), globals);
+  let f = args[0].as_function().upgrade().unwrap();
+  assert_eq!(f.arity(), 0);
+  assert!(!f.is_single_use());
+  let (inst_ind, ftype) = f.find_or_build(Vec::new(), globals);
 
   if let Some(ftype) = ftype {
     let mut info = NativeInfo::new();
     info.add_call_index(inst_ind);
     MorphStatus::NativeCompleted(info, ftype)
   } else {
-    MorphStatus::Known(Type::depends(&func, inst_ind))
+    MorphStatus::Known(Type::depends(&f, inst_ind))
   }
 }
 

@@ -1,10 +1,10 @@
 //! Common info for the parser.
 
+use crate::collapsed::CollapsedType;
 use crate::compiler::Compiler;
 use crate::scanner::Token;
 use crate::scope::ZeroMode;
 use crate::types::{CustomType, DependsOn, Type};
-use crate::collapsed::CollapsedType;
 use crate::value::{Declared, Value};
 use crate::vm::Runner;
 use std::collections::HashMap;
@@ -627,6 +627,8 @@ pub enum Opcode {
   Object(Vec<usize>),
   Array(usize),
   GetIndex(usize),
+  GetJsonIndex(usize),
+  GetJsonKey(String),
   Extract(Extraction)
 }
 

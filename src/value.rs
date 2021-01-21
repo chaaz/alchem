@@ -5,14 +5,11 @@ use crate::common::{Closure, Native, TypeNative};
 use crate::types::CustomType;
 use serde_json::{Number, Value as Json};
 use std::cmp::PartialEq;
-use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 
 pub use crate::common::{Function, Globals, MorphStatus, NativeInfo};
 pub use crate::types::{NoCustom, Type};
-
-pub fn new_globals() -> Globals<NoCustom> { HashMap::new() }
 
 pub fn add_native<C>(globals: &mut Globals<C>, name: impl ToString, arity: u8, native: Native<C>, typen: TypeNative<C>)
 where
@@ -113,6 +110,13 @@ impl<C: CustomType> Value<C> {
     match self {
       Self::Bool(v) => *v,
       _ => panic!("Not a boolean: {:?}", self)
+    }
+  }
+
+  pub fn as_json_mut(&mut self) -> &mut Json {
+    match self {
+      Self::Json(v) => v,
+      _ => panic!("Not an array.")
     }
   }
 

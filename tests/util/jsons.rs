@@ -1,11 +1,11 @@
 //! Some JSON-based native functions for alchem testing.
 
+use alchem::collapsed::CollapsedType;
 use alchem::native_fn;
 use alchem::value::{Globals, MorphStatus, NativeInfo, NoCustom, Type, Value};
-use alchem::collapsed::CollapsedType;
 use alchem::vm::Runner;
 use macro_rules_attribute::macro_rules_attribute;
-use serde_json::{Value as Json, Number};
+use serde_json::{Number, Value as Json};
 
 type Val = Value<NoCustom>;
 type Info = NativeInfo<NoCustom>;
@@ -15,7 +15,7 @@ type Gl = Globals<NoCustom>;
 type Status = MorphStatus<NoCustom>;
 
 pub fn ntvt_to_json(args: Vec<Tp>, _globals: &Gl) -> Status {
-  let mut info = NativeInfo::new();
+  let mut info = Info::new();
   assert_eq!(args.len(), 1);
   info.add_type(CollapsedType::from_common(&args[0]));
   MorphStatus::NativeCompleted(info, Type::Json)
@@ -34,30 +34,16 @@ fn convert_to_json(val: Val, t: CollapsedType<NoCustom>) -> Json {
     Value::Int(v) => Json::Number(Number::from_f64(v as f64).unwrap()),
     Value::Bool(v) => Json::Bool(v),
     Value::String(v) => Json::String(v.to_string()),
-    Value::Array(v) => {
-      match t {
-        CollapsedType::Object(o) => {
-          Json::Object(
-            v.into_iter()
-              .zip(o.into_key_types())
-              .map(|(v, (k, t))| (k, convert_to_json(v, t)))
-              .collect()
-          )
-        }
-        CollapsedType::Array(a) => {
-          Json::Array(
-            v.into_iter()
-              .zip(a.into_types())
-              .map(|(v, t)| convert_to_json(v, t))
-              .collect()
-          )
-        }
-        other => panic!("Array value can't have a type: {:?}", other)
+    Value::Array(v) => match t {
+      CollapsedType::Object(o) => {
+        Json::Object(v.into_iter().zip(o.into_key_types()).map(|(v, (k, t))| (k, convert_to_json(v, t))).collect())
       }
-    }
+      CollapsedType::Array(a) => {
+        Json::Array(v.into_iter().zip(a.into_types()).map(|(v, t)| convert_to_json(v, t)).collect())
+      }
+      other => panic!("Array value can't have type {:?}", other)
+    },
     Value::Json(v) => v,
-    Value::Closure(_) => panic!("Can't convert function to JSON."),
-    Value::Native(_) => panic!("Can't convert native function to JSON."),
-    Value::Void => panic!("Can't convert evacuated to JSON.")
+    other => panic!("Can't convert to JSON: {:?}", other)
   }
 }

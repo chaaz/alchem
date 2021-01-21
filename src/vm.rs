@@ -275,6 +275,15 @@ fn handle_op<C: CustomType + 'static>(
       let stack_len = stack.len();
       stack[stack_len - 1] = stack[stack_len - 1].as_array_mut()[*ind].shift();
     }
+    Opcode::GetJsonIndex(ind) => {
+      let stack_len = stack.len();
+      stack[stack_len - 1] = Value::Json(stack[stack_len - 1].as_json_mut().as_array_mut().unwrap().swap_remove(*ind))
+    }
+    Opcode::GetJsonKey(name) => {
+      let stack_len = stack.len();
+      stack[stack_len - 1] =
+        Value::Json(stack[stack_len - 1].as_json_mut().as_object_mut().unwrap().remove(name).unwrap())
+    }
     Opcode::Extract(extn) => {
       let mut arr = stack.pop();
       for part in extn.parts() {

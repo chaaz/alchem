@@ -2,11 +2,10 @@
 
 use alchem::errors::Result;
 use alchem::native_fn;
-use alchem::value::{add_native, new_globals, Globals, MorphStatus, NativeInfo, NoCustom, Type, Value};
+use alchem::value::{add_native, Globals, MorphStatus, NativeInfo, NoCustom, Type, Value};
 use alchem::vm::{Runner, Vm};
 use clap::{crate_version, App, AppSettings, Arg, ArgMatches};
 use macro_rules_attribute::macro_rules_attribute;
-// use std::io::{self, BufRead};
 
 /// Get the values from the expected command-line options.
 pub async fn execute() -> Result<()> {
@@ -67,9 +66,7 @@ async fn ntv_print(vals: Vec<Val>, _info: Info, _runner: &mut Run) -> Val {
   Value::Int(1)
 }
 
-fn ntvt_number(_: Vec<Tp>, _: &Gl) -> Status {
-  MorphStatus::NativeCompleted(NativeInfo::new(), Type::Number)
-}
+fn ntvt_number(_: Vec<Tp>, _: &Gl) -> Status { MorphStatus::NativeCompleted(NativeInfo::new(), Type::Number) }
 
 #[macro_rules_attribute(native_fn!)]
 async fn ntv_number(_argv: Vec<Val>, _info: Info, _runner: &mut Run) -> Val { Value::Int(42) }
@@ -93,6 +90,8 @@ async fn ntv_recall(vals: Vec<Val>, info: Info, runner: &mut Run) -> Val {
   let inst_ind = info.call_indexes()[0];
   runner.run_closure(f, inst_ind, Vec::new()).await
 }
+
+pub fn new_globals() -> Globals<NoCustom> { Globals::new() }
 
 // async fn repl() -> Result<()> {
 //   let mut vm = Vm::new();

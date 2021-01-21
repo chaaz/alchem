@@ -4,14 +4,14 @@
 //! and `value` as builders.
 
 use crate::common::{Instr, MorphStatus, Native, NativeInfo};
-use crate::types::{Type, CustomType, Object, Array};
+use crate::types::{Array, CustomType, Object, Type};
 use crate::value::Value;
 use std::fmt;
 use std::sync::Arc;
 
 #[derive(Clone, Debug)]
 pub struct CollapsedArray<C: CustomType> {
-  types: Vec<CollapsedType<C>>,
+  types: Vec<CollapsedType<C>>
 }
 
 impl<C: CustomType + 'static> CollapsedArray<C> {
