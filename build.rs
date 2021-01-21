@@ -2,11 +2,6 @@ use std::io::{Error, ErrorKind};
 use std::process::Command;
 
 fn main() {
-  // You need to touch (or clean) build.rs to rebuild if any of the lalrpop or git rev changes.
-  // println!("cargo:rerun-if-changed=build.rs");
-
-  // lalrpop::process_root().unwrap();
-
   // let git_output = Command::new("git").args(&["rev-parse", "--short", "HEAD"]).output();
   let git_output = Command::new("git").args(&["describe", "--always", "--long", "--dirty"]).output();
   let git_hash = git_output.and_then(|output| String::from_utf8(output.stdout).map_err(conv_err));

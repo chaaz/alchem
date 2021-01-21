@@ -16,8 +16,8 @@ macro_rules_attribute = "0.0"
 serde_json = "1.0"
 
 [dependencies.tokio]
-version = "0.2"
-features = ["rt-core", "macros", "time"]
+version = "1.0"
+features = ["rt-multi-thread", "macros", "time"]
 
 [lib]
 name = "alchem"
