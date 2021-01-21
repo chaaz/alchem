@@ -2,7 +2,7 @@
 
 use crate::collapsed::FuncNative;
 use crate::common::{Closure, Native, TypeNative};
-use crate::types::CustomType;
+use crate::types::{CustomType, CustomValue, NoValue};
 use serde_json::{Number, Value as Json};
 use std::cmp::PartialEq;
 use std::fmt;
@@ -28,6 +28,7 @@ pub enum Value<C: CustomType> {
   Closure(Arc<Closure<C>>),
   Native(Arc<FuncNative<C>>),
   Json(Json),
+  Custom(C::Value),
   Void
 }
 
@@ -42,6 +43,7 @@ impl<C: CustomType> PartialEq for Value<C> {
       (Self::Native(v1), Self::Native(v2)) => Arc::ptr_eq(v1, v2),
       (Self::Array(v1), Self::Array(v2)) => v1 == v2,
       (Self::Json(a), Self::Json(b)) => a == b,
+      (Self::Custom(a), Self::Custom(b)) => a == b,
       (Self::Void, Self::Void) => true,
       _ => false
     }
@@ -59,6 +61,7 @@ impl<C: CustomType> fmt::Debug for Value<C> {
       Self::Native(v) => write!(f, "{:?}", v),
       Self::Array(_) => write!(f, "(array)"),
       Self::Json(v) => write!(f, "{:?}", v),
+      Self::Custom(v) => write!(f, "{:?}", v),
       Self::Void => write!(f, "(void)")
     }
   }
@@ -96,8 +99,26 @@ impl<C: CustomType> From<Json> for Value<C> {
   fn from(v: Json) -> Value<C> { Value::Json(v) }
 }
 
+impl From<NoValue> for Value<NoCustom> {
+  fn from(v: NoValue) -> Value<NoCustom> { Value::Custom(v) }
+}
+
 impl<C: CustomType> Value<C> {
   pub fn cloneable(&self) -> bool { true }
+
+  pub fn as_custom(&self) -> &C::Value {
+    match self {
+      Self::Custom(v) => v,
+      _ => panic!("Not an custom type: {:?}", self)
+    }
+  }
+
+  pub fn into_custom(self) -> C::Value {
+    match self {
+      Self::Custom(v) => v,
+      _ => panic!("Not an custom type: {:?}", self)
+    }
+  }
 
   pub fn as_int(&self) -> i32 {
     match self {
@@ -146,6 +167,7 @@ impl<C: CustomType> Value<C> {
       Self::Native(v) => Self::Native(v.clone()),
       Self::Array(v) => Self::Array(v.iter_mut().map(|v| v.shift()).collect()),
       Self::Json(v) => Self::Json(v.clone()),
+      Self::Custom(v) => Self::Custom(v.shift()),
       Self::Void => panic!("Cannot access an evaculated value.")
     }
   }

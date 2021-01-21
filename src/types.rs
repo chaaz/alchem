@@ -178,8 +178,13 @@ where
   }
 }
 
+pub trait CustomValue: PartialEq + Eq + fmt::Debug {
+  fn shift(&mut self) -> Self;
+}
+
 pub trait CustomType: PartialEq + Eq + IsSingle + fmt::Debug + Clone {
   type Collapsed: Clone + fmt::Debug;
+  type Value: CustomValue;
   fn collapse(&self) -> Self::Collapsed;
 }
 
@@ -187,11 +192,25 @@ pub trait IsSingle {
   fn is_single_use(&self) -> bool;
 }
 
+#[derive(Debug)]
+pub enum NoValue {}
+
+impl CustomValue for NoValue {
+  fn shift(&mut self) -> Self { panic!("Can't shift non-existent NoValue") }
+}
+
+impl PartialEq for NoValue {
+  fn eq(&self, _other: &Self) -> bool { true }
+}
+
+impl Eq for NoValue {}
+
 #[derive(Clone, Debug)]
 pub enum NoCustom {}
 
 impl CustomType for NoCustom {
   type Collapsed = ();
+  type Value = NoValue;
   fn collapse(&self) {}
 }
 
