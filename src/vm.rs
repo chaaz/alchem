@@ -4,8 +4,8 @@ use crate::collapsed::{Chunk, Declared, FuncNative};
 use crate::common::{Closure, Instr, Native, NativeInfo, ObjUpvalue, ObjUpvalues, Opcode};
 use crate::compiler::{collapse_script, compile};
 use crate::inline::Inline;
-use crate::value::Value;
 use crate::types::CustomType;
+use crate::value::Value;
 use std::collections::HashMap;
 use std::fmt;
 use std::future::Future;
@@ -14,26 +14,24 @@ use std::sync::Arc;
 
 const FRAMES_MAX: usize = 255;
 
-type CallStack = Vec<CallFrame>;
-type Globals = HashMap<String, Declared>;
-type Stack = Inline<Value>;
+type CallStack<C> = Vec<CallFrame<C>>;
+type Globals<C> = HashMap<String, Declared<C>>;
+type Stack<C> = Inline<Value<C>>;
 
-pub struct Vm {
-  call_stack: CallStack,
-  stack: Stack,
-  open_upvals: OpenUpvalues
+pub struct Vm<C: CustomType> {
+  call_stack: CallStack<C>,
+  stack: Stack<C>,
+  open_upvals: OpenUpvalues<C>
 }
 
-impl Default for Vm {
-  fn default() -> Vm { Vm::new() }
+impl<C: CustomType + 'static> Default for Vm<C> {
+  fn default() -> Vm<C> { Vm::new() }
 }
 
-impl Vm {
-  pub fn new() -> Vm { Vm { call_stack: Vec::new(), stack: Stack::new(), open_upvals: OpenUpvalues::new() } }
+impl<C: CustomType + 'static> Vm<C> {
+  pub fn new() -> Vm<C> { Vm { call_stack: Vec::new(), stack: Stack::new(), open_upvals: OpenUpvalues::new() } }
 
-  pub async fn interpret<C: CustomType + 'static>(
-    self, source: &str, globals: crate::common::Globals<C>
-  ) -> Value {
+  pub async fn interpret(self, source: &str, globals: crate::common::Globals<C>) -> Value<C> {
     debug_assert_eq!(self.stack.len(), 0);
     debug_assert_eq!(self.call_stack.len(), 0);
 
@@ -51,15 +49,15 @@ impl Vm {
   }
 }
 
-pub struct Runner {
-  call_stack: CallStack,
-  stack: Stack,
-  globals: Globals,
-  open_upvals: OpenUpvalues
+pub struct Runner<C: CustomType> {
+  call_stack: CallStack<C>,
+  stack: Stack<C>,
+  globals: Globals<C>,
+  open_upvals: OpenUpvalues<C>
 }
 
-impl Runner {
-  pub async fn run_value(&mut self, value: Value, inst_ind: usize, args: Vec<Value>) -> Value {
+impl<C: CustomType + 'static> Runner<C> {
+  pub async fn run_value(&mut self, value: Value<C>, inst_ind: usize, args: Vec<Value<C>>) -> Value<C> {
     match value {
       Value::Closure(closure) => self.run_closure(closure, inst_ind, args).await,
       Value::Native(func_native) => self.run_native(func_native, inst_ind, args).await,
@@ -67,7 +65,7 @@ impl Runner {
     }
   }
 
-  pub async fn run_closure(&mut self, closure: Arc<Closure>, inst_ind: usize, args: Vec<Value>) -> Value {
+  pub async fn run_closure(&mut self, closure: Arc<Closure<C>>, inst_ind: usize, args: Vec<Value<C>>) -> Value<C> {
     self.stack.push(closure.clone().into());
     debug_assert!(args.len() < 255);
     let args_len = args.len() as u8;
@@ -77,13 +75,15 @@ impl Runner {
     self.run_loop().await
   }
 
-  pub async fn run_native(&mut self, func_native: Arc<FuncNative>, inst_ind: usize, args: Vec<Value>) -> Value {
+  pub async fn run_native(
+    &mut self, func_native: Arc<FuncNative<C>>, inst_ind: usize, args: Vec<Value<C>>
+  ) -> Value<C> {
     let native_info = func_native.instances()[inst_ind].clone();
     let native = func_native.native();
     (native)(args, native_info, self).await
   }
 
-  async fn run_loop(&mut self) -> Value {
+  async fn run_loop(&mut self) -> Value<C> {
     loop {
       match self.run() {
         Stopped::Native(ntv) => {
@@ -95,7 +95,7 @@ impl Runner {
     }
   }
 
-  fn run(&mut self) -> Stopped {
+  fn run(&mut self) -> Stopped<C> {
     self.try_run()
 
     // TODO(later): inject error handling everywhere
@@ -105,7 +105,7 @@ impl Runner {
     // }
   }
 
-  fn try_run(&mut self) -> Stopped {
+  fn try_run(&mut self) -> Stopped<C> {
     let Runner { call_stack, stack, globals, open_upvals } = self;
 
     #[cfg(feature = "verbose")]
@@ -162,23 +162,23 @@ impl Runner {
   // }
 }
 
-pub struct NativeRun {
-  native: Native,
-  args: Vec<Value>,
-  native_info: NativeInfo
+pub struct NativeRun<C: CustomType> {
+  native: Native<C>,
+  args: Vec<Value<C>>,
+  native_info: NativeInfo<C>
 }
 
-impl NativeRun {
-  pub fn run<'r>(self, runner: &'r mut Runner) -> Pin<Box<dyn Future<Output = Value> + Send + 'r>> {
+impl<C: CustomType + 'static> NativeRun<C> {
+  pub fn run<'r>(self, runner: &'r mut Runner<C>) -> Pin<Box<dyn Future<Output = Value<C>> + Send + 'r>> {
     (self.native)(self.args, self.native_info, runner)
   }
 }
 
 #[allow(clippy::too_many_arguments)]
-fn handle_op(
-  instr: &Instr, globals: &Globals, upvalues: &mut [ObjUpvalue], open_upvals: &mut OpenUpvalues, chunk: &Chunk,
-  slots: &usize, stack: &mut Stack, ip: &mut usize
-) -> Handled {
+fn handle_op<C: CustomType + 'static>(
+  instr: &Instr, globals: &Globals<C>, upvalues: &mut [ObjUpvalue<C>], open_upvals: &mut OpenUpvalues<C>,
+  chunk: &Chunk<C>, slots: &usize, stack: &mut Stack<C>, ip: &mut usize
+) -> Handled<C> {
   match instr.op() {
     Opcode::Lt => binary(stack, |v, w| v.op_lt(w)),
     Opcode::GetLocal(l) => {
@@ -290,15 +290,15 @@ fn handle_op(
   Handled::None
 }
 
-struct OpenUpvalues {
+struct OpenUpvalues<C: CustomType> {
   #[allow(clippy::type_complexity)]
-  per_slot: Vec<(usize, Vec<(Arc<Closure>, usize)>)>
+  per_slot: Vec<(usize, Vec<(Arc<Closure<C>>, usize)>)>
 }
 
-impl OpenUpvalues {
-  pub fn new() -> OpenUpvalues { OpenUpvalues { per_slot: Vec::new() } }
+impl<C: CustomType + 'static> OpenUpvalues<C> {
+  pub fn new() -> OpenUpvalues<C> { OpenUpvalues { per_slot: Vec::new() } }
 
-  pub fn insert_opens(&mut self, uv_inds: Vec<usize>, closure: &Arc<Closure>) {
+  pub fn insert_opens(&mut self, uv_inds: Vec<usize>, closure: &Arc<Closure<C>>) {
     for (ci, uvi) in uv_inds.into_iter().enumerate() {
       let ind = self.per_slot.iter().rposition(|(s, _)| s < &uvi).map(|p| p + 1).unwrap_or(0);
 
@@ -310,7 +310,7 @@ impl OpenUpvalues {
     }
   }
 
-  pub fn close_gte(&mut self, target: usize, stack: &mut Stack) {
+  pub fn close_gte(&mut self, target: usize, stack: &mut Stack<C>) {
     let per_slot = &mut self.per_slot;
     while !per_slot.is_empty() && per_slot.last().unwrap().0 >= target {
       let (slot, locs) = per_slot.pop().unwrap();
@@ -319,24 +319,24 @@ impl OpenUpvalues {
   }
 }
 
-fn capture_upvalue(i: usize) -> ObjUpvalue { ObjUpvalue::new(i) }
+fn capture_upvalue<C: CustomType>(i: usize) -> ObjUpvalue<C> { ObjUpvalue::new(i) }
 
 // Upvalues are done a little bit differently than they are in the book: since the language is immutable, we can
 // safely push values from the stack.
-fn close_upvalues(list: &[(Arc<Closure>, usize)], val: &mut Value) {
+fn close_upvalues<C: CustomType + 'static>(list: &[(Arc<Closure<C>>, usize)], val: &mut Value<C>) {
   for (closure, ci) in list {
     closure.flip_upval(*ci, val.shift());
   }
 }
 
-fn rpeek(stack: &Stack, back: usize) -> &Value { stack.get(stack.len() - 1 - back) }
+fn rpeek<C: CustomType>(stack: &Stack<C>, back: usize) -> &Value<C> { stack.get(stack.len() - 1 - back) }
 
-pub enum Stopped {
-  Native(NativeRun),
-  Done(Value)
+pub enum Stopped<C: CustomType> {
+  Native(NativeRun<C>),
+  Done(Value<C>)
 }
 
-impl fmt::Debug for Stopped {
+impl<C: CustomType> fmt::Debug for Stopped<C> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
       Self::Native(_) => write!(f, "(native)"),
@@ -345,19 +345,19 @@ impl fmt::Debug for Stopped {
   }
 }
 
-enum Handled {
-  StackOp(StackOp),
-  Native(NativeRun),
+enum Handled<C: CustomType> {
+  StackOp(StackOp<C>),
+  Native(NativeRun<C>),
   None
 }
 
-enum StackOp {
-  Push(CallFrame),
+enum StackOp<C: CustomType> {
+  Push(CallFrame<C>),
   Pop
 }
 
-impl StackOp {
-  pub fn perform(self, call_stack: &mut CallStack) -> bool {
+impl<C: CustomType + 'static> StackOp<C> {
+  pub fn perform(self, call_stack: &mut CallStack<C>) -> bool {
     match self {
       Self::Push(f) => {
         call_stack.push(f);
@@ -371,7 +371,7 @@ impl StackOp {
   }
 }
 
-fn call_value(stack: &mut Stack, inst_ind: usize, argc: u8) -> Handled {
+fn call_value<C: CustomType + 'static>(stack: &mut Stack<C>, inst_ind: usize, argc: u8) -> Handled<C> {
   let value = rpeek(stack, argc as usize);
 
   match value {
@@ -381,7 +381,9 @@ fn call_value(stack: &mut Stack, inst_ind: usize, argc: u8) -> Handled {
   }
 }
 
-fn call_closure(f: Arc<Closure>, inst_ind: usize, argc: u8, stack: &mut Stack, exit: bool) -> StackOp {
+fn call_closure<C: CustomType + 'static>(
+  f: Arc<Closure<C>>, inst_ind: usize, argc: u8, stack: &mut Stack<C>, exit: bool
+) -> StackOp<C> {
   if argc != f.arity() {
     panic!("Calling arity {} with {} args.", f.arity(), argc);
   }
@@ -389,7 +391,9 @@ fn call_closure(f: Arc<Closure>, inst_ind: usize, argc: u8, stack: &mut Stack, e
   StackOp::Push(CallFrame::new(f, inst_ind, stack_len - (argc as usize) - 1, exit))
 }
 
-fn call_native(f: Arc<FuncNative>, inst_ind: usize, argc: u8, stack: &mut Stack) -> NativeRun {
+fn call_native<C: CustomType + 'static>(
+  f: Arc<FuncNative<C>>, inst_ind: usize, argc: u8, stack: &mut Stack<C>
+) -> NativeRun<C> {
   if argc != f.arity() {
     panic!("Calling arity {} with {} args.", f.arity(), argc);
   }
@@ -406,31 +410,31 @@ fn call_native(f: Arc<FuncNative>, inst_ind: usize, argc: u8, stack: &mut Stack)
   NativeRun { native, args, native_info }
 }
 
-fn unary<F: FnOnce(&Value) -> Value>(stack: &mut Stack, f: F) {
+fn unary<C: CustomType, F: FnOnce(&Value<C>) -> Value<C>>(stack: &mut Stack<C>, f: F) {
   let last = stack.len() - 1;
   *stack.get_mut(last) = f(stack.get(last));
 }
 
-fn binary<F: FnOnce(&Value, &Value) -> Value>(stack: &mut Stack, f: F) {
+fn binary<C: CustomType, F: FnOnce(&Value<C>, &Value<C>) -> Value<C>>(stack: &mut Stack<C>, f: F) {
   let last = stack.len() - 1;
   *stack.get_mut(last - 1) = f(stack.get(last - 1), stack.get(last));
   stack.drop();
 }
 
-pub struct CallFrame {
-  closure: Arc<Closure>,
+pub struct CallFrame<C: CustomType> {
+  closure: Arc<Closure<C>>,
   inst_ind: usize,
   ip: usize,
   slots: usize,
   exit: bool
 }
 
-impl CallFrame {
-  pub fn new(closure: Arc<Closure>, inst_ind: usize, slots: usize, exit: bool) -> CallFrame {
+impl<C: CustomType + 'static> CallFrame<C> {
+  pub fn new(closure: Arc<Closure<C>>, inst_ind: usize, slots: usize, exit: bool) -> CallFrame<C> {
     CallFrame { closure, inst_ind, ip: 0, slots, exit }
   }
 
-  pub fn closure(&self) -> &Closure { &self.closure }
+  pub fn closure(&self) -> &Closure<C> { &self.closure }
   pub fn ip(&self) -> usize { self.ip }
   pub fn ip_mut(&mut self) -> &mut usize { &mut self.ip }
   pub fn slots(&self) -> usize { self.slots }
@@ -438,7 +442,7 @@ impl CallFrame {
   pub fn exit(&self) -> bool { self.exit }
   pub fn inst_ind(&self) -> usize { self.inst_ind }
 
-  pub fn parts(&mut self) -> (&mut usize, &ObjUpvalues, &Chunk, &usize) {
+  pub fn parts(&mut self) -> (&mut usize, &ObjUpvalues<C>, &Chunk<C>, &usize) {
     let inst_ind = self.inst_ind();
     (&mut self.ip, self.closure.upvalues(), self.closure.chunk(inst_ind), &self.slots)
   }

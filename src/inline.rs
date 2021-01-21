@@ -13,7 +13,7 @@ use std::ops::{Deref, DerefMut};
 use std::ptr;
 use std::slice;
 
-const MAX: usize = 1024;
+const MAX: usize = 512;
 
 pub struct Inline<T> {
   inline: MaybeUninit<[T; MAX]>,

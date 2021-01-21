@@ -3,18 +3,18 @@
 use crate::collapsed::FuncNative;
 use crate::common::{Closure, Native, TypeNative};
 use crate::types::CustomType;
+use serde_json::{Number, Value as Json};
 use std::cmp::PartialEq;
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
-use serde_json::{Number, Value as Json};
 
 pub use crate::common::{Function, Globals, MorphStatus, NativeInfo};
-pub use crate::types::{Type, NoCustom};
+pub use crate::types::{NoCustom, Type};
 
 pub fn new_globals() -> Globals<NoCustom> { HashMap::new() }
 
-pub fn add_native<C>(globals: &mut Globals<C>, name: impl ToString, arity: u8, native: Native, typen: TypeNative<C>)
+pub fn add_native<C>(globals: &mut Globals<C>, name: impl ToString, arity: u8, native: Native<C>, typen: TypeNative<C>)
 where
   C: CustomType + 'static
 {
@@ -22,20 +22,20 @@ where
   globals.insert(name.to_string(), Arc::new(function));
 }
 
-pub enum Value {
+pub enum Value<C: CustomType> {
   Float(f64),
   Int(i32),
   Bool(bool),
   String(Arc<str>),
-  Array(Vec<Value>),
-  Closure(Arc<Closure>),
-  Native(Arc<FuncNative>),
+  Array(Vec<Value<C>>),
+  Closure(Arc<Closure<C>>),
+  Native(Arc<FuncNative<C>>),
   Json(Json),
   Void
 }
 
-impl PartialEq for Value {
-  fn eq(&self, other: &Value) -> bool {
+impl<C: CustomType> PartialEq for Value<C> {
+  fn eq(&self, other: &Value<C>) -> bool {
     match (self, other) {
       (Self::Float(v1), Self::Float(v2)) => v1 == v2,
       (Self::Int(v1), Self::Int(v2)) => v1 == v2,
@@ -51,7 +51,7 @@ impl PartialEq for Value {
   }
 }
 
-impl fmt::Debug for Value {
+impl<C: CustomType> fmt::Debug for Value<C> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
       Self::Float(v) => write!(f, "{}", v),
@@ -67,35 +67,39 @@ impl fmt::Debug for Value {
   }
 }
 
-impl From<i32> for Value {
-  fn from(v: i32) -> Value { Value::Int(v) }
+impl<C: CustomType> From<i32> for Value<C> {
+  fn from(v: i32) -> Value<C> { Value::Int(v) }
 }
 
-impl From<f64> for Value {
-  fn from(v: f64) -> Value { Value::Float(v) }
+impl<C: CustomType> From<f64> for Value<C> {
+  fn from(v: f64) -> Value<C> { Value::Float(v) }
 }
 
-impl From<bool> for Value {
-  fn from(v: bool) -> Value { Value::Bool(v) }
+impl<C: CustomType> From<bool> for Value<C> {
+  fn from(v: bool) -> Value<C> { Value::Bool(v) }
 }
 
-impl From<String> for Value {
-  fn from(v: String) -> Value { Value::String(v.into()) }
+impl<C: CustomType> From<String> for Value<C> {
+  fn from(v: String) -> Value<C> { Value::String(v.into()) }
 }
 
-impl From<&str> for Value {
-  fn from(v: &str) -> Value { v.to_string().into() }
+impl<C: CustomType> From<&str> for Value<C> {
+  fn from(v: &str) -> Value<C> { v.to_string().into() }
 }
 
-impl From<Closure> for Value {
-  fn from(v: Closure) -> Value { Value::Closure(Arc::new(v)) }
+impl<C: CustomType> From<Closure<C>> for Value<C> {
+  fn from(v: Closure<C>) -> Value<C> { Value::Closure(Arc::new(v)) }
 }
 
-impl From<Arc<Closure>> for Value {
-  fn from(v: Arc<Closure>) -> Value { Value::Closure(v) }
+impl<C: CustomType> From<Arc<Closure<C>>> for Value<C> {
+  fn from(v: Arc<Closure<C>>) -> Value<C> { Value::Closure(v) }
 }
 
-impl Value {
+impl<C: CustomType> From<Json> for Value<C> {
+  fn from(v: Json) -> Value<C> { Value::Json(v) }
+}
+
+impl<C: CustomType> Value<C> {
   pub fn cloneable(&self) -> bool { true }
 
   pub fn as_int(&self) -> i32 {
@@ -112,14 +116,14 @@ impl Value {
     }
   }
 
-  pub fn as_array_mut(&mut self) -> &mut Vec<Value> {
+  pub fn as_array_mut(&mut self) -> &mut Vec<Value<C>> {
     match self {
       Self::Array(v) => v,
       _ => panic!("Not an array.")
     }
   }
 
-  pub fn as_closure(&self) -> Arc<Closure> {
+  pub fn as_closure(&self) -> Arc<Closure<C>> {
     match self {
       Self::Closure(v) => v.clone(),
       _ => panic!("Not a closure: {:?}", self)
@@ -128,7 +132,7 @@ impl Value {
 
   // `shift` acts like `clone` for most value types, but for mutable or otherwise un-cloneable values, it will
   // instead take the value, leaving a void in its place.
-  pub fn shift(&mut self) -> Value {
+  pub fn shift(&mut self) -> Value<C> {
     match self {
       Self::Float(v) => Self::Float(*v),
       Self::Int(v) => Self::Int(*v),
@@ -142,7 +146,7 @@ impl Value {
     }
   }
 
-  pub fn op_negate(&self) -> Value {
+  pub fn op_negate(&self) -> Value<C> {
     match self {
       Self::Float(v) => Self::Float(-*v),
       Self::Int(v) => Self::Int(-*v),
@@ -155,7 +159,7 @@ impl Value {
     }
   }
 
-  pub fn op_not(&self) -> Value {
+  pub fn op_not(&self) -> Value<C> {
     match self {
       Self::Bool(v) => Self::Bool(!*v),
       Self::Json(Json::Bool(n)) => Self::Json(Json::Bool(!n)),
@@ -163,16 +167,26 @@ impl Value {
     }
   }
 
-  pub fn op_add(&self, other: &Value) -> Value {
+  pub fn op_add(&self, other: &Value<C>) -> Value<C> {
     match (self, other) {
       (Self::Float(v1), Value::Float(v2)) => Self::Float(v1 + v2),
       (Self::Int(v1), Value::Int(v2)) => Self::Int(v1 + v2),
       (Self::String(v1), Value::String(v2)) => Self::String(concat(v1, v2).into()),
-      (Self::Int(a), Self::Json(Json::Number(b))) => Self::Json(Json::Number(Number::from_f64(*a as f64 + b.as_f64().unwrap()).unwrap())),
-      (Self::Float(a), Self::Json(Json::Number(b))) => Self::Json(Json::Number(Number::from_f64(*a as f64 + b.as_f64().unwrap()).unwrap())),
-      (Self::Json(Json::Number(a)), Self::Int(b)) => Self::Json(Json::Number(Number::from_f64(a.as_f64().unwrap() + *b as f64).unwrap())),
-      (Self::Json(Json::Number(a)), Self::Float(b)) => Self::Json(Json::Number(Number::from_f64(a.as_f64().unwrap() + *b as f64).unwrap())),
-      (Self::Json(Json::Number(a)), Self::Json(Json::Number(b))) => Self::Json(Json::Number(Number::from_f64(a.as_f64().unwrap() + b.as_f64().unwrap()).unwrap())),
+      (Self::Int(a), Self::Json(Json::Number(b))) => {
+        Self::Json(Json::Number(Number::from_f64(*a as f64 + b.as_f64().unwrap()).unwrap()))
+      }
+      (Self::Float(a), Self::Json(Json::Number(b))) => {
+        Self::Json(Json::Number(Number::from_f64(*a as f64 + b.as_f64().unwrap()).unwrap()))
+      }
+      (Self::Json(Json::Number(a)), Self::Int(b)) => {
+        Self::Json(Json::Number(Number::from_f64(a.as_f64().unwrap() + *b as f64).unwrap()))
+      }
+      (Self::Json(Json::Number(a)), Self::Float(b)) => {
+        Self::Json(Json::Number(Number::from_f64(a.as_f64().unwrap() + *b as f64).unwrap()))
+      }
+      (Self::Json(Json::Number(a)), Self::Json(Json::Number(b))) => {
+        Self::Json(Json::Number(Number::from_f64(a.as_f64().unwrap() + b.as_f64().unwrap()).unwrap()))
+      }
       (Self::String(a), Self::Json(Json::String(b))) => Self::Json(Json::String(concat(a, b))),
       (Self::Json(Json::String(a)), Self::String(b)) => Self::Json(Json::String(concat(a, b))),
       (Self::Json(Json::String(a)), Self::Json(Json::String(b))) => Self::Json(Json::String(concat(a, b))),
@@ -180,59 +194,99 @@ impl Value {
     }
   }
 
-  pub fn op_subtract(&self, other: &Value) -> Value {
+  pub fn op_subtract(&self, other: &Value<C>) -> Value<C> {
     match (self, other) {
       (Self::Float(v1), Value::Float(v2)) => Self::Float(v1 - v2),
       (Self::Int(v1), Value::Int(v2)) => Self::Int(v1 - v2),
-      (Self::Int(a), Self::Json(Json::Number(b))) => Self::Json(Json::Number(Number::from_f64(*a as f64 - b.as_f64().unwrap()).unwrap())),
-      (Self::Float(a), Self::Json(Json::Number(b))) => Self::Json(Json::Number(Number::from_f64(*a as f64 - b.as_f64().unwrap()).unwrap())),
-      (Self::Json(Json::Number(a)), Self::Int(b)) => Self::Json(Json::Number(Number::from_f64(a.as_f64().unwrap() - *b as f64).unwrap())),
-      (Self::Json(Json::Number(a)), Self::Float(b)) => Self::Json(Json::Number(Number::from_f64(a.as_f64().unwrap() - *b as f64).unwrap())),
-      (Self::Json(Json::Number(a)), Self::Json(Json::Number(b))) => Self::Json(Json::Number(Number::from_f64(a.as_f64().unwrap() - b.as_f64().unwrap()).unwrap())),
+      (Self::Int(a), Self::Json(Json::Number(b))) => {
+        Self::Json(Json::Number(Number::from_f64(*a as f64 - b.as_f64().unwrap()).unwrap()))
+      }
+      (Self::Float(a), Self::Json(Json::Number(b))) => {
+        Self::Json(Json::Number(Number::from_f64(*a as f64 - b.as_f64().unwrap()).unwrap()))
+      }
+      (Self::Json(Json::Number(a)), Self::Int(b)) => {
+        Self::Json(Json::Number(Number::from_f64(a.as_f64().unwrap() - *b as f64).unwrap()))
+      }
+      (Self::Json(Json::Number(a)), Self::Float(b)) => {
+        Self::Json(Json::Number(Number::from_f64(a.as_f64().unwrap() - *b as f64).unwrap()))
+      }
+      (Self::Json(Json::Number(a)), Self::Json(Json::Number(b))) => {
+        Self::Json(Json::Number(Number::from_f64(a.as_f64().unwrap() - b.as_f64().unwrap()).unwrap()))
+      }
       (o1, o2) => panic!("Can't subtract mismatch types: {:?}, {:?}", o1, o2)
     }
   }
 
-  pub fn op_multiply(&self, other: &Value) -> Value {
+  pub fn op_multiply(&self, other: &Value<C>) -> Value<C> {
     match (self, other) {
       (Self::Float(v1), Value::Float(v2)) => Self::Float(v1 * v2),
       (Self::Int(v1), Value::Int(v2)) => Self::Int(v1 * v2),
-      (Self::Int(a), Self::Json(Json::Number(b))) => Self::Json(Json::Number(Number::from_f64(*a as f64 * b.as_f64().unwrap()).unwrap())),
-      (Self::Float(a), Self::Json(Json::Number(b))) => Self::Json(Json::Number(Number::from_f64(*a as f64 * b.as_f64().unwrap()).unwrap())),
-      (Self::Json(Json::Number(a)), Self::Int(b)) => Self::Json(Json::Number(Number::from_f64(a.as_f64().unwrap() * *b as f64).unwrap())),
-      (Self::Json(Json::Number(a)), Self::Float(b)) => Self::Json(Json::Number(Number::from_f64(a.as_f64().unwrap() * *b as f64).unwrap())),
-      (Self::Json(Json::Number(a)), Self::Json(Json::Number(b))) => Self::Json(Json::Number(Number::from_f64(a.as_f64().unwrap() * b.as_f64().unwrap()).unwrap())),
+      (Self::Int(a), Self::Json(Json::Number(b))) => {
+        Self::Json(Json::Number(Number::from_f64(*a as f64 * b.as_f64().unwrap()).unwrap()))
+      }
+      (Self::Float(a), Self::Json(Json::Number(b))) => {
+        Self::Json(Json::Number(Number::from_f64(*a as f64 * b.as_f64().unwrap()).unwrap()))
+      }
+      (Self::Json(Json::Number(a)), Self::Int(b)) => {
+        Self::Json(Json::Number(Number::from_f64(a.as_f64().unwrap() * *b as f64).unwrap()))
+      }
+      (Self::Json(Json::Number(a)), Self::Float(b)) => {
+        Self::Json(Json::Number(Number::from_f64(a.as_f64().unwrap() * *b as f64).unwrap()))
+      }
+      (Self::Json(Json::Number(a)), Self::Json(Json::Number(b))) => {
+        Self::Json(Json::Number(Number::from_f64(a.as_f64().unwrap() * b.as_f64().unwrap()).unwrap()))
+      }
       (o1, o2) => panic!("Can't multiply mismatch types: {:?}, {:?}", o1, o2)
     }
   }
 
-  pub fn op_divide(&self, other: &Value) -> Value {
+  pub fn op_divide(&self, other: &Value<C>) -> Value<C> {
     match (self, other) {
       (Self::Float(v1), Value::Float(v2)) => Self::Float(v1 / v2),
       (Self::Int(v1), Value::Int(v2)) => Self::Int(v1 / v2),
-      (Self::Int(a), Self::Json(Json::Number(b))) => Self::Json(Json::Number(Number::from_f64(*a as f64 / b.as_f64().unwrap()).unwrap())),
-      (Self::Float(a), Self::Json(Json::Number(b))) => Self::Json(Json::Number(Number::from_f64(*a as f64 / b.as_f64().unwrap()).unwrap())),
-      (Self::Json(Json::Number(a)), Self::Int(b)) => Self::Json(Json::Number(Number::from_f64(a.as_f64().unwrap() / *b as f64).unwrap())),
-      (Self::Json(Json::Number(a)), Self::Float(b)) => Self::Json(Json::Number(Number::from_f64(a.as_f64().unwrap() / *b as f64).unwrap())),
-      (Self::Json(Json::Number(a)), Self::Json(Json::Number(b))) => Self::Json(Json::Number(Number::from_f64(a.as_f64().unwrap() / b.as_f64().unwrap()).unwrap())),
+      (Self::Int(a), Self::Json(Json::Number(b))) => {
+        Self::Json(Json::Number(Number::from_f64(*a as f64 / b.as_f64().unwrap()).unwrap()))
+      }
+      (Self::Float(a), Self::Json(Json::Number(b))) => {
+        Self::Json(Json::Number(Number::from_f64(*a as f64 / b.as_f64().unwrap()).unwrap()))
+      }
+      (Self::Json(Json::Number(a)), Self::Int(b)) => {
+        Self::Json(Json::Number(Number::from_f64(a.as_f64().unwrap() / *b as f64).unwrap()))
+      }
+      (Self::Json(Json::Number(a)), Self::Float(b)) => {
+        Self::Json(Json::Number(Number::from_f64(a.as_f64().unwrap() / *b as f64).unwrap()))
+      }
+      (Self::Json(Json::Number(a)), Self::Json(Json::Number(b))) => {
+        Self::Json(Json::Number(Number::from_f64(a.as_f64().unwrap() / b.as_f64().unwrap()).unwrap()))
+      }
       (o1, o2) => panic!("Can't divide mismatch types: {:?}, {:?}", o1, o2)
     }
   }
 
-  pub fn op_mod(&self, other: &Value) -> Value {
+  pub fn op_mod(&self, other: &Value<C>) -> Value<C> {
     match (self, other) {
       (Self::Float(v1), Value::Float(v2)) => Self::Float(v1 % v2),
       (Self::Int(v1), Value::Int(v2)) => Self::Int(v1 % v2),
-      (Self::Int(a), Self::Json(Json::Number(b))) => Self::Json(Json::Number(Number::from_f64(*a as f64 % b.as_f64().unwrap()).unwrap())),
-      (Self::Float(a), Self::Json(Json::Number(b))) => Self::Json(Json::Number(Number::from_f64(*a as f64 % b.as_f64().unwrap()).unwrap())),
-      (Self::Json(Json::Number(a)), Self::Int(b)) => Self::Json(Json::Number(Number::from_f64(a.as_f64().unwrap() % *b as f64).unwrap())),
-      (Self::Json(Json::Number(a)), Self::Float(b)) => Self::Json(Json::Number(Number::from_f64(a.as_f64().unwrap() % *b as f64).unwrap())),
-      (Self::Json(Json::Number(a)), Self::Json(Json::Number(b))) => Self::Json(Json::Number(Number::from_f64(a.as_f64().unwrap() % b.as_f64().unwrap()).unwrap())),
+      (Self::Int(a), Self::Json(Json::Number(b))) => {
+        Self::Json(Json::Number(Number::from_f64(*a as f64 % b.as_f64().unwrap()).unwrap()))
+      }
+      (Self::Float(a), Self::Json(Json::Number(b))) => {
+        Self::Json(Json::Number(Number::from_f64(*a as f64 % b.as_f64().unwrap()).unwrap()))
+      }
+      (Self::Json(Json::Number(a)), Self::Int(b)) => {
+        Self::Json(Json::Number(Number::from_f64(a.as_f64().unwrap() % *b as f64).unwrap()))
+      }
+      (Self::Json(Json::Number(a)), Self::Float(b)) => {
+        Self::Json(Json::Number(Number::from_f64(a.as_f64().unwrap() % *b as f64).unwrap()))
+      }
+      (Self::Json(Json::Number(a)), Self::Json(Json::Number(b))) => {
+        Self::Json(Json::Number(Number::from_f64(a.as_f64().unwrap() % b.as_f64().unwrap()).unwrap()))
+      }
       (o1, o2) => panic!("Can't divide mismatch types: {:?}, {:?}", o1, o2)
     }
   }
 
-  pub fn op_gt(&self, other: &Value) -> Value {
+  pub fn op_gt(&self, other: &Value<C>) -> Value<C> {
     match (self, other) {
       (Self::Float(v1), Value::Float(v2)) => Self::Bool(v1 > v2),
       (Self::Int(v1), Value::Int(v2)) => Self::Bool(v1 > v2),
@@ -240,12 +294,14 @@ impl Value {
       (Self::Float(a), Self::Json(Json::Number(b))) => Self::Json(Json::Bool(*a as f64 > b.as_f64().unwrap())),
       (Self::Json(Json::Number(a)), Self::Int(b)) => Self::Json(Json::Bool(a.as_f64().unwrap() > *b as f64)),
       (Self::Json(Json::Number(a)), Self::Float(b)) => Self::Json(Json::Bool(a.as_f64().unwrap() > *b as f64)),
-      (Self::Json(Json::Number(a)), Self::Json(Json::Number(b))) => Self::Json(Json::Bool(a.as_f64().unwrap() > b.as_f64().unwrap())),
+      (Self::Json(Json::Number(a)), Self::Json(Json::Number(b))) => {
+        Self::Json(Json::Bool(a.as_f64().unwrap() > b.as_f64().unwrap()))
+      }
       (o1, o2) => panic!("Can't compare types: {:?}, {:?}", o1, o2)
     }
   }
 
-  pub fn op_gte(&self, other: &Value) -> Value {
+  pub fn op_gte(&self, other: &Value<C>) -> Value<C> {
     match (self, other) {
       (Self::Float(v1), Value::Float(v2)) => Self::Bool(v1 >= v2),
       (Self::Int(v1), Value::Int(v2)) => Self::Bool(v1 >= v2),
@@ -253,12 +309,14 @@ impl Value {
       (Self::Float(a), Self::Json(Json::Number(b))) => Self::Json(Json::Bool(*a as f64 >= b.as_f64().unwrap())),
       (Self::Json(Json::Number(a)), Self::Int(b)) => Self::Json(Json::Bool(a.as_f64().unwrap() >= *b as f64)),
       (Self::Json(Json::Number(a)), Self::Float(b)) => Self::Json(Json::Bool(a.as_f64().unwrap() >= *b as f64)),
-      (Self::Json(Json::Number(a)), Self::Json(Json::Number(b))) => Self::Json(Json::Bool(a.as_f64().unwrap() >= b.as_f64().unwrap())),
+      (Self::Json(Json::Number(a)), Self::Json(Json::Number(b))) => {
+        Self::Json(Json::Bool(a.as_f64().unwrap() >= b.as_f64().unwrap()))
+      }
       (o1, o2) => panic!("Can't compare types: {:?}, {:?}", o1, o2)
     }
   }
 
-  pub fn op_lt(&self, other: &Value) -> Value {
+  pub fn op_lt(&self, other: &Value<C>) -> Value<C> {
     match (self, other) {
       (Self::Float(v1), Value::Float(v2)) => Self::Bool(v1 < v2),
       (Self::Int(v1), Value::Int(v2)) => Self::Bool(v1 < v2),
@@ -266,12 +324,14 @@ impl Value {
       (Self::Float(a), Self::Json(Json::Number(b))) => Self::Json(Json::Bool((*a as f64) < b.as_f64().unwrap())),
       (Self::Json(Json::Number(a)), Self::Int(b)) => Self::Json(Json::Bool(a.as_f64().unwrap() < *b as f64)),
       (Self::Json(Json::Number(a)), Self::Float(b)) => Self::Json(Json::Bool(a.as_f64().unwrap() < *b as f64)),
-      (Self::Json(Json::Number(a)), Self::Json(Json::Number(b))) => Self::Json(Json::Bool(a.as_f64().unwrap() < b.as_f64().unwrap())),
+      (Self::Json(Json::Number(a)), Self::Json(Json::Number(b))) => {
+        Self::Json(Json::Bool(a.as_f64().unwrap() < b.as_f64().unwrap()))
+      }
       (o1, o2) => panic!("Can't compare types: {:?}, {:?}", o1, o2)
     }
   }
 
-  pub fn op_lte(&self, other: &Value) -> Value {
+  pub fn op_lte(&self, other: &Value<C>) -> Value<C> {
     match (self, other) {
       (Self::Float(v1), Value::Float(v2)) => Self::Bool(v1 <= v2),
       (Self::Int(v1), Value::Int(v2)) => Self::Bool(v1 <= v2),
@@ -279,12 +339,14 @@ impl Value {
       (Self::Float(a), Self::Json(Json::Number(b))) => Self::Json(Json::Bool(*a as f64 <= b.as_f64().unwrap())),
       (Self::Json(Json::Number(a)), Self::Int(b)) => Self::Json(Json::Bool(a.as_f64().unwrap() <= *b as f64)),
       (Self::Json(Json::Number(a)), Self::Float(b)) => Self::Json(Json::Bool(a.as_f64().unwrap() <= *b as f64)),
-      (Self::Json(Json::Number(a)), Self::Json(Json::Number(b))) => Self::Json(Json::Bool(a.as_f64().unwrap() <= b.as_f64().unwrap())),
+      (Self::Json(Json::Number(a)), Self::Json(Json::Number(b))) => {
+        Self::Json(Json::Bool(a.as_f64().unwrap() <= b.as_f64().unwrap()))
+      }
       (o1, o2) => panic!("Can't compare types: {:?}, {:?}", o1, o2)
     }
   }
 
-  pub fn op_eq(&self, other: &Value) -> Value {
+  pub fn op_eq(&self, other: &Value<C>) -> Value<C> {
     match (self, other) {
       (Self::Float(v1), Value::Float(v2)) => Self::Bool(is_eq(*v1, *v2)),
       (Self::Int(v1), Value::Int(v2)) => Self::Bool(v1 == v2),
@@ -292,7 +354,9 @@ impl Value {
       (Self::Float(a), Self::Json(Json::Number(b))) => Self::Json(Json::Bool(is_eq(*a as f64, b.as_f64().unwrap()))),
       (Self::Json(Json::Number(a)), Self::Int(b)) => Self::Json(Json::Bool(is_eq(a.as_f64().unwrap(), *b as f64))),
       (Self::Json(Json::Number(a)), Self::Float(b)) => Self::Json(Json::Bool(is_eq(a.as_f64().unwrap(), *b as f64))),
-      (Self::Json(Json::Number(a)), Self::Json(Json::Number(b))) => Self::Json(Json::Bool(is_eq(a.as_f64().unwrap(), b.as_f64().unwrap()))),
+      (Self::Json(Json::Number(a)), Self::Json(Json::Number(b))) => {
+        Self::Json(Json::Bool(is_eq(a.as_f64().unwrap(), b.as_f64().unwrap())))
+      }
       (Self::String(v1), Value::String(v2)) => Self::Bool(v1 == v2),
       (Self::Json(Json::String(a)), Self::String(b)) => Self::Bool(a.as_str() == b.as_ref()),
       (Self::String(a), Self::Json(Json::String(b))) => Self::Bool(a.as_ref() == b.as_str()),
@@ -303,9 +367,9 @@ impl Value {
     }
   }
 
-  pub fn op_neq(&self, other: &Value) -> Value { Value::Bool(!self.op_eq(other).as_bool()) }
+  pub fn op_neq(&self, other: &Value<C>) -> Value<C> { Value::Bool(!self.op_eq(other).as_bool()) }
 
-  pub fn op_and(&self, other: &Value) -> Value {
+  pub fn op_and(&self, other: &Value<C>) -> Value<C> {
     match (self, other) {
       (Self::Bool(v1), Value::Bool(v2)) => Self::Bool(*v1 && *v2),
       (Self::Bool(v1), Value::Json(Json::Bool(v2))) => Self::Json(Json::Bool(*v1 && *v2)),
@@ -315,7 +379,7 @@ impl Value {
     }
   }
 
-  pub fn op_or(&self, other: &Value) -> Value {
+  pub fn op_or(&self, other: &Value<C>) -> Value<C> {
     match (self, other) {
       (Self::Bool(v1), Value::Bool(v2)) => Self::Bool(*v1 || *v2),
       (Self::Bool(v1), Value::Json(Json::Bool(v2))) => Self::Json(Json::Bool(*v1 || *v2)),
@@ -428,9 +492,10 @@ macro_rules! native_fn {(
 #[cfg(test)]
 mod test {
   use super::*;
+  use crate::types::NoCustom;
 
   #[test]
   fn value_clone() {
-    assert_eq!(Value::Float(1.0).shift(), Value::Float(1.0));
+    assert_eq!(Value::<NoCustom>::Float(1.0).shift(), Value::Float(1.0));
   }
 }

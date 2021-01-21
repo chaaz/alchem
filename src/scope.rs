@@ -1,8 +1,8 @@
 //! Scope and emit rules for the compiler.
 
-use crate::common::{Chunk, Function, Instr, MorphIndex, Opcode, Upval, KnownUpvals};
+use crate::common::{Chunk, Function, Instr, KnownUpvals, MorphIndex, Opcode, Upval};
 use crate::scanner::Token;
-use crate::types::{Type, CustomType};
+use crate::types::{CustomType, Type};
 use crate::value::Declared;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -451,9 +451,7 @@ impl<C: CustomType + 'static> Locals<C> {
     local.local_type = utype;
   }
 
-  pub fn mark_last_initialized(&mut self, utype: Type<C>) {
-    self.mark_initialized(1, utype);
-  }
+  pub fn mark_last_initialized(&mut self, utype: Type<C>) { self.mark_initialized(1, utype); }
 
   pub fn set_captured(&mut self, locals_ind: usize, captured: bool) { self.locals[locals_ind].set_captured(captured); }
 }
@@ -464,11 +462,13 @@ struct Local<C: CustomType> {
   depth: u16,
   is_captured: bool,
   local_type: Type<C>,
-  used: usize,
+  used: usize
 }
 
 impl<C: CustomType> Local<C> {
-  pub fn new(name: String) -> Local<C> { Local { name, depth: 0, is_captured: false, local_type: Type::Unset, used: 0 } }
+  pub fn new(name: String) -> Local<C> {
+    Local { name, depth: 0, is_captured: false, local_type: Type::Unset, used: 0 }
+  }
   pub fn name(&self) -> &str { &self.name }
   pub fn depth(&self) -> u16 { self.depth }
   pub fn is_captured(&self) -> bool { self.is_captured }

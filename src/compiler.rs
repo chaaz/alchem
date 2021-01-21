@@ -1,18 +1,18 @@
 //! The alchem compiler.
 
 use crate::collapsed::collapse_function;
-use crate::common::{Function, Globals, MorphIndex, Opcode, Upval, Extraction, ExtractionPart, KnownUpvals};
+use crate::common::{Extraction, ExtractionPart, Function, Globals, KnownUpvals, MorphIndex, Opcode, Upval};
 use crate::errors::Error;
 use crate::scanner::{Scanner, Token, TokenType, TokenTypeDiscr};
 use crate::scope::{Jump, ScopeLater, ScopeOne, ScopeStack, ScopeZero};
-use crate::types::{DependsOn, Type, Object, Array, NoCustom, CustomType};
+use crate::types::{Array, CustomType, DependsOn, NoCustom, Object, Type};
 use crate::value::Declared;
 use lazy_static::lazy_static;
 use std::collections::HashMap;
+use std::marker::PhantomData;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::vec::IntoIter;
-use std::marker::PhantomData;
 
 lazy_static! {
   static ref RULES: HashMap<TokenTypeDiscr, Rule<NoCustom>> = construct_rules();
@@ -21,9 +21,7 @@ lazy_static! {
 type Prefix<C> = Option<for<'r> fn(&'r mut Compiler<C>) -> Type<C>>;
 type Infix<C> = Option<for<'r> fn(&'r mut Compiler<C>, &Type<C>) -> Type<C>>;
 
-pub fn compile<C: CustomType + 'static>(
-  source: &str, globals: &Globals<C>
-) -> (ScopeZero<C>, Type<C>) {
+pub fn compile<C: CustomType + 'static>(source: &str, globals: &Globals<C>) -> (ScopeZero<C>, Type<C>) {
   let mut scanner = Scanner::new(source);
   let compiler = Compiler::new(scanner.drain_into_iter(), globals);
   let (zero, stype) = compiler.compile();
@@ -32,7 +30,7 @@ pub fn compile<C: CustomType + 'static>(
 
 pub fn collapse_script<C: CustomType + 'static>(
   scope: ScopeZero<C>, stype: Type<C>, globals: Globals<C>
-) -> (crate::collapsed::Function, usize, HashMap<String, crate::collapsed::Declared>) {
+) -> (crate::collapsed::Function<C>, usize, HashMap<String, crate::collapsed::Declared<C>>) {
   let chunk = scope.into_chunk();
   let function = Function::script(chunk, stype);
   let globals = globals.into_iter().map(|(k, v)| (k, collapse_function(v))).collect();
@@ -285,24 +283,31 @@ where
       }
       Destructure::Array(v) => {
         let mut total = 0;
-        let parts = v.iter().enumerate().flat_map(|(i, d)| {
-          let sub_type = dtype.as_array().get(i).clone();
-          let (counted, ex) = self.extract(d, sub_type, at - total, extr.push(i));
-          total += counted;
-          ex.into_parts().into_iter()
-        }).collect();
+        let parts = v
+          .iter()
+          .enumerate()
+          .flat_map(|(i, d)| {
+            let sub_type = dtype.as_array().get(i).clone();
+            let (counted, ex) = self.extract(d, sub_type, at - total, extr.push(i));
+            total += counted;
+            ex.into_parts().into_iter()
+          })
+          .collect();
         (total, Extraction::from_parts(parts))
       }
       Destructure::Object(m, ord) => {
         let mut total = 0;
-        let parts = ord.iter().flat_map(|key| {
-          let d = m.get(key).unwrap();
-          let i = dtype.as_object().index_of(key).unwrap();
-          let sub_type = dtype.as_object().get(key).clone();
-          let (counted, ex) = self.extract(d, sub_type, at - total, extr.push(i));
-          total += counted;
-          ex.into_parts().into_iter()
-        }).collect();
+        let parts = ord
+          .iter()
+          .flat_map(|key| {
+            let d = m.get(key).unwrap();
+            let i = dtype.as_object().index_of(key).unwrap();
+            let sub_type = dtype.as_object().get(key).clone();
+            let (counted, ex) = self.extract(d, sub_type, at - total, extr.push(i));
+            total += counted;
+            ex.into_parts().into_iter()
+          })
+          .collect();
         (total, Extraction::from_parts(parts))
       }
     }
@@ -613,7 +618,13 @@ where
         assert!(!ltype.is_known() || ltype.is_json() || ltype == &Type::Number || ltype == &Type::String)
       }
       TokenTypeDiscr::DoubleEq | TokenTypeDiscr::NotEq => {
-        assert!(!ltype.is_known() || ltype.is_json() || ltype == &Type::Number || ltype == &Type::String || ltype == &Type::Bool)
+        assert!(
+          !ltype.is_known()
+            || ltype.is_json()
+            || ltype == &Type::Number
+            || ltype == &Type::String
+            || ltype == &Type::Bool
+        )
       }
       _ => ()
     }

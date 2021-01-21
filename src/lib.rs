@@ -8,7 +8,7 @@
 pub mod errors;
 #[macro_use]
 pub mod value;
-pub(crate) mod collapsed;
+pub mod collapsed;
 pub(crate) mod common;
 pub(crate) mod compiler;
 pub(crate) mod either;

@@ -4,21 +4,76 @@
 //! and `value` as builders.
 
 use crate::common::{Instr, MorphStatus, Native, NativeInfo};
+use crate::types::{Type, CustomType, Object, Array};
 use crate::value::Value;
-use crate::types::CustomType;
 use std::fmt;
 use std::sync::Arc;
 
-pub enum Declared {
+#[derive(Clone, Debug)]
+pub struct CollapsedArray<C: CustomType> {
+  types: Vec<CollapsedType<C>>,
+}
+
+impl<C: CustomType + 'static> CollapsedArray<C> {
+  pub fn from_common(o: &Array<C>) -> CollapsedArray<C> {
+    let types = o.types().iter().map(|t| CollapsedType::from_common(t)).collect();
+    CollapsedArray { types }
+  }
+
+  pub fn into_types(self) -> impl Iterator<Item = CollapsedType<C>> { self.types.into_iter() }
+}
+
+#[derive(Clone, Debug)]
+pub struct CollapsedObject<C: CustomType> {
+  types: Vec<CollapsedType<C>>,
+  index: Vec<String>
+}
+
+impl<C: CustomType + 'static> CollapsedObject<C> {
+  pub fn from_common(o: &Object<C>) -> CollapsedObject<C> {
+    let index = o.index().to_vec();
+    let types = index.iter().map(|i| CollapsedType::from_common(&o.types()[i])).collect();
+    CollapsedObject { types, index }
+  }
+
+  pub fn into_key_types(self) -> impl Iterator<Item = (String, CollapsedType<C>)> {
+    self.index.into_iter().zip(self.types.into_iter())
+  }
+}
+
+#[derive(Clone, Debug)]
+pub enum CollapsedType<C>
+where
+  C: CustomType
+{
+  Reflective,
+  Object(CollapsedObject<C>),
+  Array(CollapsedArray<C>),
+  Custom(C::Collapsed)
+}
+
+impl<C: CustomType + 'static> CollapsedType<C> {
+  pub fn from_common(t: &Type<C>) -> CollapsedType<C> {
+    match t {
+      Type::Unset | Type::DependsOn(_) => panic!("Can't collapse unknown type."),
+      Type::Object(o) => CollapsedType::Object(CollapsedObject::from_common(o)),
+      Type::Array(a) => CollapsedType::Array(CollapsedArray::from_common(a)),
+      Type::Custom(c) => CollapsedType::Custom(c.collapse()),
+      _ => CollapsedType::Reflective
+    }
+  }
+}
+
+pub enum Declared<C: CustomType> {
   Float(f64),
   Int(i32),
   Bool(bool),
   String(Arc<str>),
-  Function(Arc<Function>),
-  Native(Arc<FuncNative>)
+  Function(Arc<Function<C>>),
+  Native(Arc<FuncNative<C>>)
 }
 
-impl fmt::Debug for Declared {
+impl<C: CustomType> fmt::Debug for Declared<C> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
       Self::Float(v) => write!(f, "{}", v),
@@ -31,10 +86,8 @@ impl fmt::Debug for Declared {
   }
 }
 
-impl Declared {
-  pub fn from_common<C: CustomType + 'static>(
-    d: crate::value::Declared<C>
-  ) -> Declared {
+impl<C: CustomType + 'static> Declared<C> {
+  pub fn from_common(d: crate::value::Declared<C>) -> Declared<C> {
     use crate::value::Declared as D;
 
     match d {
@@ -53,14 +106,14 @@ impl Declared {
     }
   }
 
-  pub fn as_function(&self) -> Arc<Function> {
+  pub fn as_function(&self) -> Arc<Function<C>> {
     match self {
       Self::Function(v) => v.clone(),
       _ => panic!("Not a function: {:?}", self)
     }
   }
 
-  pub fn to_value(&self) -> Value {
+  pub fn to_value(&self) -> Value<C> {
     match self {
       Self::Float(v) => Value::Float(*v),
       Self::Int(v) => Value::Int(*v),
@@ -76,9 +129,7 @@ impl Declared {
   }
 }
 
-pub fn collapse_function<C: CustomType + 'static>(
-  f: Arc<crate::common::Function<C>>
-) -> Declared {
+pub fn collapse_function<C: CustomType + 'static>(f: Arc<crate::common::Function<C>>) -> Declared<C> {
   use crate::common::FnType;
 
   match f.fn_type() {
@@ -87,23 +138,21 @@ pub fn collapse_function<C: CustomType + 'static>(
   }
 }
 
-pub struct FuncNative {
+pub struct FuncNative<C: CustomType> {
   arity: u8,
-  native: Native,
-  instances: Vec<NativeInfo>
+  native: Native<C>,
+  instances: Vec<NativeInfo<C>>
 }
 
-impl fmt::Debug for FuncNative {
+impl<C: CustomType> fmt::Debug for FuncNative<C> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     let arg_n = if self.arity == 1 { "arg" } else { "args" };
     write!(f, "native({} {})", self.arity, arg_n)
   }
 }
 
-impl FuncNative {
-  pub fn from_common<C: CustomType + 'static>(
-    native: Native, f: Arc<crate::common::Function<C>>
-  ) -> FuncNative {
+impl<C: CustomType + 'static> FuncNative<C> {
+  pub fn from_common(native: Native<C>, f: Arc<crate::common::Function<C>>) -> FuncNative<C> {
     let f = Arc::try_unwrap(f).expect("Multiple references to function during collapse.");
     let (arity, morphs) = f.into_collapse();
     let instances = morphs
@@ -118,26 +167,24 @@ impl FuncNative {
   }
 
   pub fn arity(&self) -> u8 { self.arity }
-  pub fn native(&self) -> &Native { &self.native }
-  pub fn instances(&self) -> &[NativeInfo] { &self.instances }
+  pub fn native(&self) -> &Native<C> { &self.native }
+  pub fn instances(&self) -> &[NativeInfo<C>] { &self.instances }
 }
 
-pub struct Function {
+pub struct Function<C: CustomType> {
   arity: u8,
-  instances: Vec<Chunk>
+  instances: Vec<Chunk<C>>
 }
 
-impl fmt::Debug for Function {
+impl<C: CustomType> fmt::Debug for Function<C> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     let arg_n = if self.arity == 1 { "arg" } else { "args" };
     write!(f, "fn({} {})", self.arity, arg_n)
   }
 }
 
-impl Function {
-  pub fn from_common<C: CustomType + 'static>(
-    f: Arc<crate::common::Function<C>>
-  ) -> Function {
+impl<C: CustomType + 'static> Function<C> {
+  pub fn from_common(f: Arc<crate::common::Function<C>>) -> Function<C> {
     let f = Arc::try_unwrap(f).expect("Multiple references to function during collapse.");
     let (arity, morphs) = f.into_collapse();
     let instances = morphs
@@ -152,17 +199,17 @@ impl Function {
   }
 
   pub fn arity(&self) -> u8 { self.arity }
-  pub fn instances(&self) -> &[Chunk] { &self.instances }
-  pub fn chunk(&self, inst_ind: usize) -> &Chunk { &self.instances[inst_ind] }
+  pub fn instances(&self) -> &[Chunk<C>] { &self.instances }
+  pub fn chunk(&self, inst_ind: usize) -> &Chunk<C> { &self.instances[inst_ind] }
 }
 
-pub struct Chunk {
-  constants: Constants,
+pub struct Chunk<C: CustomType> {
+  constants: Constants<C>,
   code: Vec<Instr>
 }
 
-impl Chunk {
-  pub fn from_common<C: CustomType + 'static>(c: crate::common::Chunk<C>) -> Chunk {
+impl<C: CustomType + 'static> Chunk<C> {
+  pub fn from_common(c: crate::common::Chunk<C>) -> Chunk<C> {
     let (constants, code) = c.into_collapse();
     Chunk { constants: Constants::from_common(constants), code }
   }
@@ -176,7 +223,7 @@ impl Chunk {
   // pub fn at_fast(&self, ind: usize) -> &Instr { &self.code[ind] }
 
   pub fn constants_len(&self) -> usize { self.constants.len() }
-  pub fn get_constant(&self, ind: usize) -> Option<&Declared> { self.constants.get(ind) }
+  pub fn get_constant(&self, ind: usize) -> Option<&Declared<C>> { self.constants.get(ind) }
 
   pub fn debug(&self) {
     println!("constants:");
@@ -190,18 +237,16 @@ impl Chunk {
   }
 }
 
-struct Constants {
-  values: Vec<Declared>
+struct Constants<C: CustomType> {
+  values: Vec<Declared<C>>
 }
 
-impl Constants {
-  pub fn from_common<C: CustomType + 'static>(
-    c: Vec<crate::value::Declared<C>>
-  ) -> Constants {
+impl<C: CustomType + 'static> Constants<C> {
+  pub fn from_common(c: Vec<crate::value::Declared<C>>) -> Constants<C> {
     Constants { values: c.into_iter().map(Declared::from_common).collect() }
   }
 
   pub fn len(&self) -> usize { self.values.len() }
-  pub fn get(&self, ind: usize) -> Option<&Declared> { self.values.get(ind) }
-  pub fn iter(&self) -> impl Iterator<Item = &Declared> { self.values.iter() }
+  pub fn get(&self, ind: usize) -> Option<&Declared<C>> { self.values.get(ind) }
+  pub fn iter(&self) -> impl Iterator<Item = &Declared<C>> { self.values.iter() }
 }

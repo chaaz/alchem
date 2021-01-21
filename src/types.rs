@@ -2,14 +2,14 @@
 
 use crate::common::{Function, MorphIndex};
 use crate::either::IterEither3::{A, B, C};
-use std::iter::{empty, once};
-use std::sync::{Arc, Weak};
 use std::collections::HashMap;
 use std::fmt;
+use std::iter::{empty, once};
+use std::sync::{Arc, Weak};
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct Array<C: CustomType> {
-  types: Vec<Type<C>>,
+  types: Vec<Type<C>>
 }
 
 impl<C: CustomType + 'static> Default for Array<C> {
@@ -28,7 +28,7 @@ impl<C: CustomType + 'static> Array<C> {
 #[derive(Debug, PartialEq, Eq)]
 pub struct Object<C: CustomType> {
   types: HashMap<String, Type<C>>,
-  indexes: Vec<String>
+  index: Vec<String>
 }
 
 impl<C: CustomType + 'static> Default for Object<C> {
@@ -36,18 +36,18 @@ impl<C: CustomType + 'static> Default for Object<C> {
 }
 
 impl<C: CustomType + 'static> Object<C> {
-  pub fn new() -> Object<C> { Object { types: HashMap::new(), indexes: Vec::new() } }
+  pub fn new() -> Object<C> { Object { types: HashMap::new(), index: Vec::new() } }
   pub fn types(&self) -> &HashMap<String, Type<C>> { &self.types }
-  pub fn indexes(&self) -> &[String] { &self.indexes }
-  pub fn index_of(&self, key: &str) -> Option<usize> { self.indexes.iter().position(|k| k == key) }
+  pub fn index(&self) -> &[String] { &self.index }
+  pub fn index_of(&self, key: &str) -> Option<usize> { self.index.iter().position(|k| k == key) }
   pub fn get(&self, key: &str) -> &Type<C> { self.types.get(key).unwrap() }
-  pub fn len(&self) -> usize { self.indexes.len() }
+  pub fn len(&self) -> usize { self.index.len() }
   pub fn is_single_use(&self) -> bool { self.types.values().any(|v| v.is_single_use()) }
 
   pub fn add(&mut self, key: String, t: Type<C>) {
     self.types.insert(key, t);
-    self.indexes = self.types.keys().cloned().collect();
-    self.indexes.sort();
+    self.index = self.types.keys().cloned().collect();
+    self.index.sort();
   }
 }
 
@@ -106,7 +106,7 @@ where
       Self::FnSync(f) => f.upgrade().unwrap().is_single_use(),
       Self::String => true,
       Self::Custom(c) => c.is_single_use(),
-      _ => false,
+      _ => false
     }
   }
 
@@ -169,9 +169,19 @@ where
       other => panic!("Type {:?} is not an object.", other)
     }
   }
+
+  pub fn into_object(self) -> Arc<Object<C>> {
+    match self {
+      Self::Object(o) => o,
+      other => panic!("Type {:?} is not an object.", other)
+    }
+  }
 }
 
-pub trait CustomType: PartialEq + Eq + IsSingle + fmt::Debug + Clone {}
+pub trait CustomType: PartialEq + Eq + IsSingle + fmt::Debug + Clone {
+  type Collapsed: Clone + fmt::Debug;
+  fn collapse(&self) -> Self::Collapsed;
+}
 
 pub trait IsSingle {
   fn is_single_use(&self) -> bool;
@@ -180,7 +190,10 @@ pub trait IsSingle {
 #[derive(Clone, Debug)]
 pub enum NoCustom {}
 
-impl CustomType for NoCustom {}
+impl CustomType for NoCustom {
+  type Collapsed = ();
+  fn collapse(&self) {}
+}
 
 impl PartialEq for NoCustom {
   fn eq(&self, _other: &Self) -> bool { true }

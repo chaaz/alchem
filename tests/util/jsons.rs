@@ -1,0 +1,63 @@
+//! Some JSON-based native functions for alchem testing.
+
+use alchem::native_fn;
+use alchem::value::{Globals, MorphStatus, NativeInfo, NoCustom, Type, Value};
+use alchem::collapsed::CollapsedType;
+use alchem::vm::Runner;
+use macro_rules_attribute::macro_rules_attribute;
+use serde_json::{Value as Json, Number};
+
+type Val = Value<NoCustom>;
+type Info = NativeInfo<NoCustom>;
+type Run = Runner<NoCustom>;
+type Tp = Type<NoCustom>;
+type Gl = Globals<NoCustom>;
+type Status = MorphStatus<NoCustom>;
+
+pub fn ntvt_to_json(args: Vec<Tp>, _globals: &Gl) -> Status {
+  let mut info = NativeInfo::new();
+  assert_eq!(args.len(), 1);
+  info.add_type(CollapsedType::from_common(&args[0]));
+  MorphStatus::NativeCompleted(info, Type::Json)
+}
+
+#[macro_rules_attribute(native_fn!)]
+pub async fn ntv_to_json(vals: Vec<Val>, info: Info, _runner: &mut Run) -> Val {
+  let val = vals.into_iter().next().unwrap();
+  let col_type = info.into_types().into_iter().next().unwrap();
+  Value::Json(convert_to_json(val, col_type))
+}
+
+fn convert_to_json(val: Val, t: CollapsedType<NoCustom>) -> Json {
+  match val {
+    Value::Float(v) => Json::Number(Number::from_f64(v).unwrap()),
+    Value::Int(v) => Json::Number(Number::from_f64(v as f64).unwrap()),
+    Value::Bool(v) => Json::Bool(v),
+    Value::String(v) => Json::String(v.to_string()),
+    Value::Array(v) => {
+      match t {
+        CollapsedType::Object(o) => {
+          Json::Object(
+            v.into_iter()
+              .zip(o.into_key_types())
+              .map(|(v, (k, t))| (k, convert_to_json(v, t)))
+              .collect()
+          )
+        }
+        CollapsedType::Array(a) => {
+          Json::Array(
+            v.into_iter()
+              .zip(a.into_types())
+              .map(|(v, t)| convert_to_json(v, t))
+              .collect()
+          )
+        }
+        other => panic!("Array value can't have a type: {:?}", other)
+      }
+    }
+    Value::Json(v) => v,
+    Value::Closure(_) => panic!("Can't convert function to JSON."),
+    Value::Native(_) => panic!("Can't convert native function to JSON."),
+    Value::Void => panic!("Can't convert evacuated to JSON.")
+  }
+}

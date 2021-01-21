@@ -3,7 +3,8 @@
 use crate::compiler::Compiler;
 use crate::scanner::Token;
 use crate::scope::ZeroMode;
-use crate::types::{DependsOn, Type, CustomType};
+use crate::types::{CustomType, DependsOn, Type};
+use crate::collapsed::CollapsedType;
 use crate::value::{Declared, Value};
 use crate::vm::Runner;
 use std::collections::HashMap;
@@ -15,10 +16,10 @@ use std::sync::{Arc, Mutex, Weak};
 const MAX_CONSTANTS: usize = 255;
 const MAX_MONOMORPHS: usize = 20;
 
-pub type Native =
-  for<'r> fn(Vec<Value>, NativeInfo, &'r mut Runner) -> Pin<Box<dyn Future<Output = Value> + Send + 'r>>;
+pub type Native<C> =
+  for<'r> fn(Vec<Value<C>>, NativeInfo<C>, &'r mut Runner<C>) -> Pin<Box<dyn Future<Output = Value<C>> + Send + 'r>>;
 pub type TypeNative<C> = fn(Vec<Type<C>>, &Globals<C>) -> MorphStatus<C>;
-pub type ObjUpvalues = Mutex<Vec<ObjUpvalue>>;
+pub type ObjUpvalues<C> = Mutex<Vec<ObjUpvalue<C>>>;
 pub type Globals<C> = HashMap<String, Arc<Function<C>>>;
 pub type KnownUpvals<C> = HashMap<String, (usize, Type<C>)>;
 
@@ -30,7 +31,7 @@ pub struct Function<C: CustomType> {
 }
 
 pub enum FnType<C: CustomType> {
-  Native(Native, TypeNative<C>),
+  Native(Native<C>, TypeNative<C>),
   Alchem(Vec<String>, Vec<Token>)
 }
 
@@ -65,7 +66,7 @@ impl<C: CustomType + 'static> Function<C> {
     Function { arity, fn_type: FnType::Alchem(param_names, code), instances: Mutex::new(Vec::new()), known_upvals }
   }
 
-  pub fn new_native(arity: u8, native: Native, type_native: TypeNative<C>) -> Function<C> {
+  pub fn new_native(arity: u8, native: Native<C>, type_native: TypeNative<C>) -> Function<C> {
     Function {
       arity,
       fn_type: FnType::Native(native, type_native),
@@ -292,7 +293,7 @@ pub enum MorphStatus<C: CustomType> {
   Reserved,
   Known(Type<C>),
   Completed(Chunk<C>, Type<C>),
-  NativeCompleted(NativeInfo, Type<C>)
+  NativeCompleted(NativeInfo<C>, Type<C>)
 }
 
 impl<C: CustomType + 'static> MorphStatus<C> {
@@ -309,18 +310,22 @@ impl<C: CustomType + 'static> MorphStatus<C> {
 }
 
 #[derive(Clone)]
-pub struct NativeInfo {
-  call_indexes: Vec<usize>
+pub struct NativeInfo<C: CustomType> {
+  call_indexes: Vec<usize>,
+  collapsed: Vec<CollapsedType<C>>
 }
 
-impl Default for NativeInfo {
-  fn default() -> NativeInfo { NativeInfo::new() }
+impl<C: CustomType> Default for NativeInfo<C> {
+  fn default() -> NativeInfo<C> { NativeInfo::new() }
 }
 
-impl NativeInfo {
-  pub fn new() -> NativeInfo { NativeInfo { call_indexes: Vec::new() } }
+impl<C: CustomType> NativeInfo<C> {
+  pub fn new() -> NativeInfo<C> { NativeInfo { call_indexes: Vec::new(), collapsed: Vec::new() } }
   pub fn add_call_index(&mut self, ci: usize) { self.call_indexes.push(ci); }
   pub fn call_indexes(&self) -> &[usize] { &self.call_indexes }
+  pub fn add_type(&mut self, t: CollapsedType<C>) { self.collapsed.push(t); }
+  pub fn types(&self) -> &[CollapsedType<C>] { &self.collapsed }
+  pub fn into_types(self) -> Vec<CollapsedType<C>> { self.collapsed }
 }
 
 #[derive(Clone, Debug)]
@@ -409,12 +414,12 @@ impl Upval {
   pub fn is_local(&self) -> bool { self.is_local }
 }
 
-pub struct Closure {
-  function: Arc<crate::collapsed::Function>,
-  upvalues: Mutex<Vec<ObjUpvalue>>
+pub struct Closure<C: CustomType> {
+  function: Arc<crate::collapsed::Function<C>>,
+  upvalues: Mutex<Vec<ObjUpvalue<C>>>
 }
 
-impl fmt::Debug for Closure {
+impl<C: CustomType> fmt::Debug for Closure<C> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     // TODO(later): improve locked output
     let upvalues = {
@@ -427,29 +432,29 @@ impl fmt::Debug for Closure {
   }
 }
 
-impl Closure {
-  pub fn new(function: Arc<crate::collapsed::Function>, upvalues: Vec<ObjUpvalue>) -> Closure {
+impl<C: CustomType + 'static> Closure<C> {
+  pub fn new(function: Arc<crate::collapsed::Function<C>>, upvalues: Vec<ObjUpvalue<C>>) -> Closure<C> {
     Closure { function, upvalues: Mutex::new(upvalues) }
   }
 
   pub fn arity(&self) -> u8 { self.function.arity() }
-  pub fn function(&self) -> &crate::collapsed::Function { &self.function }
-  pub fn upvalues(&self) -> &ObjUpvalues { &self.upvalues }
-  pub fn chunk(&self, inst_ind: usize) -> &crate::collapsed::Chunk { self.function.chunk(inst_ind) }
+  pub fn function(&self) -> &crate::collapsed::Function<C> { &self.function }
+  pub fn upvalues(&self) -> &ObjUpvalues<C> { &self.upvalues }
+  pub fn chunk(&self, inst_ind: usize) -> &crate::collapsed::Chunk<C> { self.function.chunk(inst_ind) }
 
-  pub fn flip_upval(&self, index: usize, value: Value) {
+  pub fn flip_upval(&self, index: usize, value: Value<C>) {
     self.upvalues.try_lock().unwrap().get_mut(index).unwrap().flip(value);
   }
 }
 
 // Using "ObjUpvalue" (the runtime object) as the name here, to distinguish from "Upval" that is primarily a
 // compiler concern.
-pub enum ObjUpvalue {
+pub enum ObjUpvalue<C: CustomType> {
   Open(usize),
-  Closed(Value) // Arc<Value> ?
+  Closed(Value<C>) // Arc<Value> ?
 }
 
-impl fmt::Debug for ObjUpvalue {
+impl<C: CustomType> fmt::Debug for ObjUpvalue<C> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
       Self::Open(loc) => write!(f, "open({})", loc),
@@ -458,8 +463,8 @@ impl fmt::Debug for ObjUpvalue {
   }
 }
 
-impl ObjUpvalue {
-  pub fn new(location: usize) -> ObjUpvalue { ObjUpvalue::Open(location) }
+impl<C: CustomType> ObjUpvalue<C> {
+  pub fn new(location: usize) -> ObjUpvalue<C> { ObjUpvalue::Open(location) }
 
   pub fn location(&self) -> usize {
     match self {
@@ -468,14 +473,14 @@ impl ObjUpvalue {
     }
   }
 
-  pub fn obtain(&mut self, stack: &mut [Value]) -> Value {
+  pub fn obtain(&mut self, stack: &mut [Value<C>]) -> Value<C> {
     match self {
       Self::Open(loc) => stack[*loc].shift(),
       Self::Closed(v) => v.shift()
     }
   }
 
-  pub fn flip(&mut self, val: Value) {
+  pub fn flip(&mut self, val: Value<C>) {
     match self {
       Self::Open(_) => {
         *self = Self::Closed(val);
@@ -485,8 +490,8 @@ impl ObjUpvalue {
   }
 }
 
-impl Clone for ObjUpvalue {
-  fn clone(&self) -> ObjUpvalue {
+impl<C: CustomType> Clone for ObjUpvalue<C> {
+  fn clone(&self) -> ObjUpvalue<C> {
     match self {
       Self::Open(loc) => Self::Open(*loc),
       _ => panic!("Can't clone closed upvalue")
@@ -632,7 +637,7 @@ impl Opcode {
 
 #[derive(Debug)]
 pub struct Extraction {
-  parts: Vec<ExtractionPart>,
+  parts: Vec<ExtractionPart>
 }
 
 impl Extraction {
