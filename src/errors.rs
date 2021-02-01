@@ -1,4 +1,4 @@
-//! Error handling for Versio is all based on `error-chain`.
+//! Error handling is all based on `error-chain`.
 
 use error_chain::error_chain;
 

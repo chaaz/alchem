@@ -8,15 +8,15 @@ use std::iter::{empty, once};
 use std::sync::{Arc, Weak};
 
 #[derive(Debug, PartialEq, Eq)]
-pub struct Array<C: CustomType> {
+pub struct Array<C: CustomType + Send + 'static> {
   types: Vec<Type<C>>
 }
 
-impl<C: CustomType + 'static> Default for Array<C> {
+impl<C: CustomType + Send + 'static> Default for Array<C> {
   fn default() -> Self { Array::new() }
 }
 
-impl<C: CustomType + 'static> Array<C> {
+impl<C: CustomType + Send + 'static> Array<C> {
   pub fn new() -> Array<C> { Array { types: Vec::new() } }
   pub fn types(&self) -> &[Type<C>] { &self.types }
   pub fn get(&self, ind: usize) -> &Type<C> { self.types.get(ind).unwrap() }
@@ -58,7 +58,7 @@ where
 {
   Number,
   Bool,
-  String,
+  String(Option<String>),
   Object(Arc<Object<C>>),
   Array(Arc<Array<C>>),
   FnSync(Weak<Function<C>>), // Weak, so that we can collapse functions later.
@@ -73,7 +73,7 @@ impl<C: CustomType> PartialEq for Type<C> {
     match (self, other) {
       (Self::Number, Self::Number) => true,
       (Self::Bool, Self::Bool) => true,
-      (Self::String, Self::String) => true,
+      (Self::String(_), Self::String(_)) => true,
       (Self::FnSync(a), Self::FnSync(b)) => Weak::ptr_eq(a, b),
       (Self::Unset, Self::Unset) => true,
       (Self::Json, Self::Json) => true,
@@ -104,7 +104,7 @@ where
       Self::Object(o) => o.is_single_use(),
       Self::Array(a) => a.is_single_use(),
       Self::FnSync(f) => f.upgrade().unwrap().is_single_use(),
-      Self::String => true,
+      Self::String(_) => true, // TODO: for testing only: see `tests/single.rs`
       Self::Custom(c) => c.is_single_use(),
       _ => false
     }
@@ -176,14 +176,32 @@ where
       other => panic!("Type {:?} is not an object.", other)
     }
   }
+
+  pub fn is_string(&self) -> bool { matches!(self, Self::String(_)) }
+
+  pub fn is_string_literal(&self) -> bool { matches!(self, Self::String(Some(_))) }
+
+  pub fn string_literal(&self) -> &str {
+    match self {
+      Self::String(Some(s)) => s,
+      _ => panic!("Not a string literal.")
+    }
+  }
+
+  pub fn as_string(&self) -> &Option<String> {
+    match self {
+      Self::String(s) => s,
+      other => panic!("Not a string type: {:?}", other)
+    }
+  }
 }
 
-pub trait CustomValue: PartialEq + Eq + fmt::Debug {
+pub trait CustomValue: Send + PartialEq + Eq + fmt::Debug {
   fn shift(&mut self) -> Self;
 }
 
-pub trait CustomType: PartialEq + Eq + IsSingle + fmt::Debug + Clone {
-  type Collapsed: Clone + fmt::Debug;
+pub trait CustomType: PartialEq + Eq + IsSingle + fmt::Debug + Clone + Send + Sync + 'static {
+  type Collapsed: Clone + Send + Sync + fmt::Debug;
   type Value: CustomValue;
   fn collapse(&self) -> Self::Collapsed;
 }

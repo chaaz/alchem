@@ -1,31 +1,29 @@
 //! The alchem compiler.
 
 use crate::collapsed::collapse_function;
-use crate::common::{Extraction, ExtractionPart, Function, Globals, KnownUpvals, MorphIndex, Opcode, Upval};
+use crate::commas::{handle_commas, HandleCommas};
+use crate::common::{Closure, Extraction, ExtractionPart, Function, Globals, KnownUpvals, MorphIndex, Opcode, Upval};
 use crate::errors::Error;
 use crate::scanner::{Scanner, Token, TokenType, TokenTypeDiscr};
 use crate::scope::{Jump, ScopeLater, ScopeOne, ScopeStack, ScopeZero};
-use crate::types::{Array, CustomType, DependsOn, NoCustom, Object, Type};
+use crate::types::{CustomType, DependsOn, Type};
 use crate::value::Declared;
-use lazy_static::lazy_static;
+use futures::future::Future;
 use std::collections::HashMap;
 use std::marker::PhantomData;
+use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::vec::IntoIter;
 
-lazy_static! {
-  static ref RULES: HashMap<TokenTypeDiscr, Rule<NoCustom>> = construct_rules();
-}
+type TFut<'r, C> = Pin<Box<dyn Future<Output = Type<C>> + Send + 'r>>;
+type Prefix<C> = Option<for<'r> fn(&'r mut Compiler<C>) -> TFut<'r, C>>;
+type Infix<C> = Option<for<'r> fn(&'r mut Compiler<C>, Type<C>) -> TFut<'r, C>>;
 
-type Prefix<C> = Option<for<'r> fn(&'r mut Compiler<C>) -> Type<C>>;
-type Infix<C> = Option<for<'r> fn(&'r mut Compiler<C>, &Type<C>) -> Type<C>>;
-
-pub fn compile<C: CustomType + 'static>(source: &str, globals: &Globals<C>) -> (ScopeZero<C>, Type<C>) {
+pub async fn compile<C: CustomType + 'static>(source: &str, globals: &Globals<C>) -> (ScopeZero<C>, Type<C>) {
   let mut scanner = Scanner::new(source);
   let compiler = Compiler::new(scanner.drain_into_iter(), globals);
-  let (zero, stype) = compiler.compile();
-  (zero, stype)
+  compiler.compile().await
 }
 
 pub fn collapse_script<C: CustomType + 'static>(
@@ -35,6 +33,11 @@ pub fn collapse_script<C: CustomType + 'static>(
   let function = Function::script(chunk, stype);
   let globals = globals.into_iter().map(|(k, v)| (k, collapse_function(v))).collect();
   (crate::collapsed::Function::from_common(Arc::new(function)), 0, globals)
+}
+
+pub fn script_to_closure<C: CustomType + 'static>(script: Arc<Function<C>>) -> Arc<Closure<C>> {
+  let function = Arc::new(crate::collapsed::Function::from_common(script));
+  Arc::new(Closure::new(function, Vec::new()))
 }
 
 pub struct Compiler<'g, C>
@@ -101,8 +104,8 @@ where
     compiler
   }
 
-  pub fn compile(mut self) -> (ScopeZero<C>, Type<C>) {
-    let btype = self.body();
+  pub async fn compile(mut self) -> (ScopeZero<C>, Type<C>) {
+    let btype = self.body().await;
     self.emit_instr(Opcode::Return);
 
     if self.had_error {
@@ -117,7 +120,7 @@ where
     self.pop_scope_zero()
   }
 
-  fn advance(&mut self) {
+  pub fn advance(&mut self) {
     let next = self.next_token();
     #[cfg(feature = "verbose")]
     {
@@ -141,7 +144,7 @@ where
 
   fn error_current(&mut self, msg: &str) { error_token(&mut self.had_error, &mut self.panic_mode, &self.current, msg); }
 
-  fn consume(&mut self, expect: TokenTypeDiscr) {
+  pub fn consume(&mut self, expect: TokenTypeDiscr) {
     if !self.token_match(expect) {
       self.error_current(&format!("Expected {:?}", expect));
     }
@@ -175,16 +178,16 @@ where
     }
   }
 
-  fn body(&mut self) -> Type<C> {
+  async fn body(&mut self) -> Type<C> {
     loop {
       match self.current_ttd() {
         TokenTypeDiscr::Equals => {
           self.advance();
-          break self.expression();
+          break self.expression().await;
         }
         TokenTypeDiscr::Eof => panic!("unexpected EOF"),
         _ => {
-          self.assignment();
+          self.assignment().await;
           if self.panic_mode {
             self.synchronize();
           }
@@ -193,26 +196,26 @@ where
     }
   }
 
-  fn block_content(&mut self) -> Type<C> {
+  async fn block_content(&mut self) -> Type<C> {
     self.begin_scope();
-    let btype = self.body();
+    let btype = self.body().await;
     self.end_scope();
     btype
   }
 
-  fn assignment(&mut self) {
+  async fn assignment(&mut self) {
     match self.current_ttd() {
       TokenTypeDiscr::Identifier => {
         let _name = self.parse_variable();
         self.consume(TokenTypeDiscr::Equals);
-        let vtype = self.expression();
+        let vtype = self.expression().await;
         self.consume(TokenTypeDiscr::Semi);
         self.mark_last_initialized(vtype);
       }
       TokenTypeDiscr::OpenSquare | TokenTypeDiscr::OpenCurl => {
-        let destruct = self.destructure();
+        let destruct = self.destructure().await;
         self.consume(TokenTypeDiscr::Equals);
-        let vtype = self.expression();
+        let vtype = self.expression().await;
         self.consume(TokenTypeDiscr::Semi);
         let idents_len = destruct.idents_len();
         let (c, extraction) = self.extract(&destruct, vtype, idents_len, ExtractionPart::empty());
@@ -224,53 +227,41 @@ where
     }
   }
 
-  fn destructure(&mut self) -> Destructure {
-    match self.current_ttd() {
-      TokenTypeDiscr::Identifier => {
-        self.advance();
-        if let TokenType::Identifier(s) = self.previous.token_type() {
-          let s = s.to_string();
-          self.declare_variable(s.clone());
-          Destructure::Ident(s)
-        } else {
-          panic!("Should have been ident during destructure.");
+  pub fn destructure<'s>(&'s mut self) -> Pin<Box<dyn Future<Output = Destructure> + Send + 's>> {
+    Box::pin(async move {
+      match self.current_ttd() {
+        TokenTypeDiscr::Identifier => {
+          self.advance();
+          if let TokenType::Identifier(s) = self.previous.token_type() {
+            let s = s.to_string();
+            self.declare_variable(s.clone());
+            Destructure::Ident(s)
+          } else {
+            panic!("Should have been ident during destructure.");
+          }
         }
-      }
-      TokenTypeDiscr::OpenSquare => {
-        self.advance();
-        let mut d = Vec::new();
-        self.handle_commas(TokenTypeDiscr::CloseSquare, 255, "array destructure", |this| {
-          d.push(this.destructure());
-        });
-        Destructure::Array(d)
-      }
-      TokenTypeDiscr::OpenCurl => {
-        self.advance();
-        let mut d = HashMap::new();
-        let mut ord = Vec::new();
+        TokenTypeDiscr::OpenSquare => {
+          self.advance();
 
-        self.handle_commas(TokenTypeDiscr::CloseCurl, 255, "object destructure", |this| {
-          this.consume(TokenTypeDiscr::Identifier);
-          let name = this.previous.token_type().as_identifier().to_string();
-          let sub = match this.current_ttd() {
-            TokenTypeDiscr::Colon => {
-              this.advance();
-              this.destructure()
-            }
-            TokenTypeDiscr::Comma | TokenTypeDiscr::CloseCurl => {
-              this.declare_variable(name.clone());
-              Destructure::Ident(name.clone())
-            }
-            other => panic!("Bad follow token for map item: {:?}", other)
-          };
-          d.insert(name.clone(), sub);
-          ord.push(name);
-        });
+          let d = handle_commas(self, TokenTypeDiscr::CloseSquare, 255, "array destructure", HandleCommas::DestrSquare)
+            .await
+            .into_destr_square();
 
-        Destructure::Object(d, ord)
+          Destructure::Array(d)
+        }
+        TokenTypeDiscr::OpenCurl => {
+          self.advance();
+
+          let (d, ord) =
+            handle_commas(self, TokenTypeDiscr::CloseCurl, 255, "object destructure", HandleCommas::DestrCurl)
+              .await
+              .into_destr_curl();
+
+          Destructure::Object(d, ord)
+        }
+        other => panic!("Unexpected token to extract: {:?}", other)
       }
-      other => panic!("Unexpected token to extract: {:?}", other)
-    }
+    })
   }
 
   fn extract(
@@ -313,7 +304,7 @@ where
     }
   }
 
-  fn parse_variable(&mut self) -> String {
+  pub fn parse_variable(&mut self) -> String {
     self.consume(TokenTypeDiscr::Identifier);
     if let TokenType::Identifier(s) = self.previous.token_type() {
       let name = s.to_string();
@@ -324,51 +315,33 @@ where
     }
   }
 
-  fn block(&mut self) -> Type<C> {
+  async fn block(&mut self) -> Type<C> {
     self.consume(TokenTypeDiscr::OpenCurl);
-    let btype = self.block_content();
+    let btype = self.block_content().await;
     self.consume(TokenTypeDiscr::CloseCurl);
     btype
   }
 
-  fn expression(&mut self) -> Type<C> { self.parse_precendence(Precedence::Or) }
+  pub async fn expression(&mut self) -> Type<C> { self.parse_precendence(Precedence::Or).await }
 
-  fn array(&mut self) -> Type<C> {
-    let mut array = Array::new();
-
-    self.handle_commas(TokenTypeDiscr::CloseSquare, 255, "array member", |this| {
-      array.add(this.expression());
-    });
+  async fn array(&mut self) -> Type<C> {
+    let array =
+      handle_commas(self, TokenTypeDiscr::CloseSquare, 255, "array member", HandleCommas::Array).await.into_array();
 
     self.emit_instr(Opcode::Array(array.len()));
     Type::Array(Arc::new(array))
   }
 
-  fn object(&mut self) -> Type<C> {
-    let mut object = Object::new();
-    let mut stack_order = Vec::new();
-
-    self.handle_commas(TokenTypeDiscr::CloseCurl, 255, "object member", |this| {
-      this.consume(TokenTypeDiscr::Identifier);
-      let name = this.previous.token_type().as_identifier().to_string();
-      let t = match this.current_ttd() {
-        TokenTypeDiscr::Colon => {
-          this.advance();
-          this.expression()
-        }
-        TokenTypeDiscr::Comma | TokenTypeDiscr::CloseCurl => this.variable(),
-        other => panic!("Bad follow token for map item: {:?}", other)
-      };
-      object.add(name.clone(), t);
-      stack_order.push(name);
-    });
+  async fn object(&mut self) -> Type<C> {
+    let (object, stack_order) =
+      handle_commas(self, TokenTypeDiscr::CloseCurl, 255, "object member", HandleCommas::Object).await.into_object();
 
     let order = stack_order.iter().map(|n| object.index_of(n).unwrap()).collect();
     self.emit_instr(Opcode::Object(order));
     Type::Object(Arc::new(object))
   }
 
-  fn literal(&mut self) -> Type<C> {
+  async fn literal(&mut self) -> Type<C> {
     // `self.emit_value(to_value::<$t>($v)?)` doesn't work because of
     // https://github.com/rust-lang/rust/issues/56254
     macro_rules! emit_value {
@@ -381,14 +354,18 @@ where
     match self.previous.token_type() {
       TokenType::IntLit(v) => emit_value!(v, i32, Type::Number),
       TokenType::FloatLit(v) => emit_value!(v, f64, Type::Number),
-      TokenType::StringLit(v) => emit_value!(v, String, Type::String),
       TokenType::TrueLit => self.emit_value(Declared::Bool(true), Type::Bool),
       TokenType::FalseLit => self.emit_value(Declared::Bool(false), Type::Bool),
+      TokenType::StringLit(v) => {
+        let t = v.clone();
+        let to_valued = to_value::<String, _>(v);
+        self.emit_value(to_valued, Type::String(Some(t)))
+      }
       other => panic!("Unexpected literal {:?}", other)
     }
   }
 
-  fn variable(&mut self) -> Type<C> {
+  pub async fn variable(&mut self) -> Type<C> {
     if let TokenType::Identifier(s) = self.previous.token_type() {
       let name = s.to_string();
       if let Some((c, vtype)) = self.resolve_local(&name) {
@@ -410,19 +387,19 @@ where
     }
   }
 
-  fn grouping(&mut self) -> Type<C> {
-    let outtype = self.expression();
+  async fn grouping(&mut self) -> Type<C> {
+    let outtype = self.expression().await;
     self.consume(TokenTypeDiscr::CloseParen);
     outtype
   }
 
-  fn if_block(&mut self) -> Type<C> {
-    let test_type = self.expression();
+  async fn if_block(&mut self) -> Type<C> {
+    let test_type = self.expression().await;
     assert!(self.scope.len() > 1 || test_type != Type::Unset);
     assert!(!test_type.is_known() || test_type == Type::Bool);
     let false_jump = self.emit_jump(Opcode::initial_jump_if_false());
     self.emit_instr(Opcode::Pop);
-    let mut b1_type = self.block();
+    let mut b1_type = self.block().await;
     assert!(self.scope.len() > 1 || b1_type != Type::Unset);
     let done_jump = self.emit_jump(Opcode::initial_jump());
     self.patch_jump(false_jump);
@@ -431,12 +408,12 @@ where
     let mut d2_jumps = Vec::new();
     while let TokenTypeDiscr::ElseifWord = self.current_ttd() {
       self.consume(TokenTypeDiscr::ElseifWord);
-      let in_test_type = self.expression();
+      let in_test_type = self.expression().await;
       assert!(self.scope.len() > 1 || in_test_type != Type::Unset);
       assert!(!in_test_type.is_known() || in_test_type == Type::Bool);
       let f2_jump = self.emit_jump(Opcode::initial_jump_if_false());
       self.emit_instr(Opcode::Pop);
-      let bx_type = self.block();
+      let bx_type = self.block().await;
       assert!(self.scope.len() > 1 || bx_type != Type::Unset);
       assert!(!b1_type.is_known() || !bx_type.is_known() || b1_type == bx_type);
       if self.scope.len() == 1 {
@@ -452,7 +429,7 @@ where
     }
 
     self.consume(TokenTypeDiscr::ElseWord);
-    let b2_type = self.block();
+    let b2_type = self.block().await;
     assert!(self.scope.len() > 1 || b2_type != Type::Unset);
     assert!(!b1_type.is_known() || !b2_type.is_known() || b1_type == b2_type);
     if self.scope.len() == 1 {
@@ -470,23 +447,18 @@ where
     b1_type
   }
 
-  fn fn_sync(&mut self) -> Type<C> {
+  async fn fn_sync(&mut self) -> Type<C> {
     self.push_scope();
     self.begin_scope();
 
     self.consume(TokenTypeDiscr::OpenParen);
-    let mut arity: u8 = 0;
-    let mut param_names = Vec::new();
 
-    self.handle_commas(TokenTypeDiscr::CloseParen, 255, "parameter", |this| {
-      arity += 1;
-      param_names.push(this.parse_variable());
-      this.mark_last_initialized(Type::Unset);
-    });
+    let (arity, param_names) =
+      handle_commas(self, TokenTypeDiscr::CloseParen, 255, "parameter", HandleCommas::Params).await.into_params();
 
     self.consume(TokenTypeDiscr::OpenCurl);
     self.scope.start_collecting();
-    self.body();
+    self.body().await;
     self.consume(TokenTypeDiscr::CloseCurl);
     self.emit_instr(Opcode::Return);
 
@@ -502,8 +474,8 @@ where
     }
   }
 
-  fn call(&mut self, intype: &Type<C>) -> Type<C> {
-    let args = self.argument_list();
+  async fn call(&mut self, intype: Type<C>) -> Type<C> {
+    let args = self.argument_list().await;
 
     if self.scope.len() == 1 {
       let function = intype.as_function();
@@ -512,9 +484,9 @@ where
       let args_len: u8 = args_len as u8;
 
       // thesis: because of scope boundries, it is impossible to compile a function call in which the function
-      // does not exist, so we can safely upgrade the function pointer.
+      // does not exist; so we can safely upgrade the function pointer.
       let function = function.upgrade().unwrap();
-      let (inst_ind, ftype) = function.find_or_build(args, self.globals);
+      let (inst_ind, ftype) = function.clone().find_or_build(args, self.globals).await;
 
       match ftype {
         Some(ftype) => {
@@ -532,17 +504,14 @@ where
     }
   }
 
-  fn argument_list(&mut self) -> Vec<Type<C>> {
-    let mut list = Vec::new();
-    self.handle_commas(TokenTypeDiscr::CloseParen, 255, "argument", |this| {
-      list.push(this.expression());
-    });
-    list
+  #[allow(clippy::let_and_return)]
+  async fn argument_list(&mut self) -> Vec<Type<C>> {
+    handle_commas(self, TokenTypeDiscr::CloseParen, 255, "argument", HandleCommas::Args).await.into_args()
   }
 
-  fn unary(&mut self) -> Type<C> {
+  async fn unary(&mut self) -> Type<C> {
     let ttd = self.previous_ttd();
-    let outtype = self.parse_precendence(Precedence::Unary);
+    let outtype = self.parse_precendence(Precedence::Unary).await;
 
     match ttd {
       TokenTypeDiscr::Minus => {
@@ -558,7 +527,7 @@ where
     outtype
   }
 
-  fn dot(&mut self, ltype: &Type<C>) -> Type<C> {
+  async fn dot(&mut self, ltype: Type<C>) -> Type<C> {
     self.advance();
     match self.previous.token_type() {
       TokenType::Identifier(s) => {
@@ -594,7 +563,7 @@ where
     }
   }
 
-  fn indot(&mut self, intype: &Type<C>) -> Type<C> {
+  async fn indot(&mut self, intype: Type<C>) -> Type<C> {
     self.advance();
     match self.previous.token_type() {
       TokenType::IntLit(s) => {
@@ -607,19 +576,19 @@ where
     }
   }
 
-  fn binary(&mut self, ltype: &Type<C>) -> Type<C> {
+  async fn binary(&mut self, ltype: Type<C>) -> Type<C> {
     let ttd = self.previous_ttd();
     let precedence = self.get_rule(ttd).precedence().up();
-    let mut rtype = self.parse_precendence(precedence);
+    let mut rtype = self.parse_precendence(precedence).await;
 
     if self.scope.len() > 1 {
       return Type::Unset;
     }
 
     // At level 1, we can accept unknown types, but not unset or mismatched types.
-    assert!(ltype != &Type::Unset);
+    assert!(ltype != Type::Unset);
     assert!(rtype != Type::Unset);
-    assert!(!ltype.is_known() || !rtype.is_known() || ltype.is_json() || rtype.is_json() || ltype == &rtype);
+    assert!(!ltype.is_known() || !rtype.is_known() || ltype.is_json() || rtype.is_json() || ltype == rtype);
 
     match ttd {
       TokenTypeDiscr::Minus
@@ -630,18 +599,14 @@ where
       | TokenTypeDiscr::Lt
       | TokenTypeDiscr::Gte
       | TokenTypeDiscr::Lte => {
-        assert!(!ltype.is_known() || ltype.is_json() || ltype == &Type::Number)
+        assert!(!ltype.is_known() || ltype.is_json() || ltype == Type::Number)
       }
       TokenTypeDiscr::Plus => {
-        assert!(!ltype.is_known() || ltype.is_json() || ltype == &Type::Number || ltype == &Type::String)
+        assert!(!ltype.is_known() || ltype.is_json() || ltype == Type::Number || ltype.is_string())
       }
       TokenTypeDiscr::DoubleEq | TokenTypeDiscr::NotEq => {
         assert!(
-          !ltype.is_known()
-            || ltype.is_json()
-            || ltype == &Type::Number
-            || ltype == &Type::String
-            || ltype == &Type::Bool
+          !ltype.is_known() || ltype.is_json() || ltype == Type::Number || ltype.is_string() || ltype == Type::Bool
         )
       }
       _ => ()
@@ -656,6 +621,10 @@ where
       | TokenTypeDiscr::Lte => {
         if ltype.is_depends() && rtype.is_depends() {
           rtype = rtype.and_depends(ltype.clone());
+        } else if ltype.is_string_literal() && rtype.is_string_literal() {
+          rtype = Type::String(Some(format!("{}{}", ltype.string_literal(), rtype.string_literal())));
+        } else if ltype.is_string() && rtype.is_string_literal() {
+          rtype = Type::String(None);
         } else if ltype.is_depends() {
           rtype = ltype.clone();
         } else if !rtype.is_depends() && ltype.is_known() && rtype.is_known() && !ltype.is_json() && !rtype.is_json() {
@@ -685,23 +654,23 @@ where
     rtype
   }
 
-  fn and(&mut self, intype: &Type<C>) -> Type<C> {
+  async fn and(&mut self, intype: Type<C>) -> Type<C> {
     let end_jump = self.emit_jump(Opcode::initial_jump_if_false());
     self.emit_instr(Opcode::Pop);
-    let outtype = self.parse_precendence(Precedence::And);
-    assert_eq!(intype, &Type::Bool);
+    let outtype = self.parse_precendence(Precedence::And).await;
+    assert_eq!(intype, Type::Bool);
     assert_eq!(outtype, Type::Bool);
     self.patch_jump(end_jump);
     Type::Bool
   }
 
-  fn or(&mut self, intype: &Type<C>) -> Type<C> {
+  async fn or(&mut self, intype: Type<C>) -> Type<C> {
     let else_jump = self.emit_jump(Opcode::initial_jump_if_false());
     let end_jump = self.emit_jump(Opcode::initial_jump());
     self.patch_jump(else_jump);
     self.emit_instr(Opcode::Pop);
-    let outtype = self.parse_precendence(Precedence::Or);
-    assert_eq!(intype, &Type::Bool);
+    let outtype = self.parse_precendence(Precedence::Or).await;
+    assert_eq!(intype, Type::Bool);
     assert_eq!(outtype, Type::Bool);
     self.patch_jump(end_jump);
     Type::Bool
@@ -710,18 +679,20 @@ where
   fn get_rule(&self, tt: TokenTypeDiscr) -> &Rule<C> { &self.rules[&tt] }
   fn previous_rule(&self) -> &Rule<C> { self.get_rule(self.previous_ttd()) }
   fn current_rule(&self) -> &Rule<C> { self.get_rule(self.current_ttd()) }
-  fn previous_ttd(&self) -> TokenTypeDiscr { self.previous.token_type().discr() }
-  fn current_ttd(&self) -> TokenTypeDiscr { self.current.token_type().discr() }
+  pub fn previous_tt(&self) -> &TokenType { self.previous.token_type() }
+  pub fn previous_ttd(&self) -> TokenTypeDiscr { self.previous.token_type().discr() }
+  pub fn current_ttd(&self) -> TokenTypeDiscr { self.current.token_type().discr() }
 
-  fn parse_precendence(&mut self, prec: Precedence) -> Type<C> {
+  async fn parse_precendence(&mut self, prec: Precedence) -> Type<C> {
     self.advance();
 
     let prefix = self.previous_rule().prefix().expect("Expected prefix expression.");
-    let mut outtype = prefix(self);
+    let mut outtype = prefix(self).await;
 
     while prec <= self.current_rule().precedence() {
       self.advance();
-      outtype = (self.previous_rule().infix().unwrap())(self, &outtype);
+      let infix = self.previous_rule().infix().expect("Expected infix expression.");
+      outtype = infix(self, outtype).await;
     }
 
     outtype
@@ -735,9 +706,9 @@ where
   fn emit_closure(&mut self, u: Vec<Upval>, f: Function<C>) -> Arc<Function<C>> { self.scope.emit_closure(u, f) }
   fn emit_jump(&mut self, code: Opcode) -> Jump { self.scope.emit_jump(code) }
   fn patch_jump(&mut self, offset: Jump) { self.scope.patch_jump(offset); }
-  fn declare_variable(&mut self, name: String) { self.scope.add_local(name); }
-  fn mark_initialized(&mut self, ind: usize, vtype: Type<C>) { self.scope.mark_initialized(ind, vtype); }
-  fn mark_last_initialized(&mut self, vtype: Type<C>) { self.scope.mark_last_initialized(vtype); }
+  pub fn declare_variable(&mut self, name: String) { self.scope.add_local(name); }
+  pub fn mark_initialized(&mut self, ind: usize, vtype: Type<C>) { self.scope.mark_initialized(ind, vtype); }
+  pub fn mark_last_initialized(&mut self, vtype: Type<C>) { self.scope.mark_last_initialized(vtype); }
   fn resolve_local(&mut self, name: &str) -> Option<(usize, Type<C>)> { self.scope.resolve_local(name) }
   fn resolve_upval(&mut self, name: &str) -> Option<(usize, Type<C>)> { self.scope.resolve_upval(name) }
   fn begin_scope(&mut self) { self.scope.begin_scope() }
@@ -746,33 +717,10 @@ where
   fn pop_scope_zero(self) -> ScopeZero<C> { self.scope.pop_scope_zero() }
   fn pop_scope_one(&mut self) -> (ScopeOne<C>, Vec<Token>) { self.scope.pop_scope_one() }
   fn pop_scope_later(&mut self) -> ScopeLater<C> { self.scope.pop_scope_later() }
-
-  fn handle_commas<F: FnMut(&mut Self)>(&mut self, closer: TokenTypeDiscr, max_elm: usize, descr_elm: &str, mut f: F) {
-    let mut separated = true;
-    let mut items = 0;
-    while self.current_ttd() != closer {
-      items += 1;
-      if items >= max_elm {
-        panic!("More than {} {}.", max_elm, descr_elm);
-      }
-      if !separated {
-        panic!("Missing comma after {}.", descr_elm);
-      }
-
-      f(self);
-
-      separated = false;
-      if self.current_ttd() == TokenTypeDiscr::Comma {
-        self.consume(TokenTypeDiscr::Comma);
-        separated = true;
-      }
-    }
-    self.consume(closer);
-  }
 }
 
 #[derive(Debug)]
-enum Destructure {
+pub enum Destructure {
   Ident(String),
   Array(Vec<Destructure>),
   Object(HashMap<String, Destructure>, Vec<String>)
@@ -788,20 +736,33 @@ impl Destructure {
   }
 }
 
-fn variable<C: CustomType + 'static>(compiler: &mut Compiler<C>) -> Type<C> { compiler.variable() }
-fn unary<C: CustomType + 'static>(compiler: &mut Compiler<C>) -> Type<C> { compiler.unary() }
-fn literal<C: CustomType + 'static>(compiler: &mut Compiler<C>) -> Type<C> { compiler.literal() }
-fn array<C: CustomType + 'static>(compiler: &mut Compiler<C>) -> Type<C> { compiler.array() }
-fn object<C: CustomType + 'static>(compiler: &mut Compiler<C>) -> Type<C> { compiler.object() }
-fn grouping<C: CustomType + 'static>(compiler: &mut Compiler<C>) -> Type<C> { compiler.grouping() }
-fn if_block<C: CustomType + 'static>(compiler: &mut Compiler<C>) -> Type<C> { compiler.if_block() }
-fn fn_sync<C: CustomType + 'static>(compiler: &mut Compiler<C>) -> Type<C> { compiler.fn_sync() }
-fn binary<C: CustomType + 'static>(compiler: &mut Compiler<C>, intype: &Type<C>) -> Type<C> { compiler.binary(intype) }
-fn indot<C: CustomType + 'static>(compiler: &mut Compiler<C>, intype: &Type<C>) -> Type<C> { compiler.indot(intype) }
-fn dot<C: CustomType + 'static>(compiler: &mut Compiler<C>, intype: &Type<C>) -> Type<C> { compiler.dot(intype) }
-fn and<C: CustomType + 'static>(compiler: &mut Compiler<C>, intype: &Type<C>) -> Type<C> { compiler.and(intype) }
-fn or<C: CustomType + 'static>(compiler: &mut Compiler<C>, intype: &Type<C>) -> Type<C> { compiler.or(intype) }
-fn call<C: CustomType + 'static>(compiler: &mut Compiler<C>, intype: &Type<C>) -> Type<C> { compiler.call(intype) }
+fn variable<'c, C: CustomType + 'static>(compiler: &'c mut Compiler<C>) -> TFut<'c, C> { Box::pin(compiler.variable()) }
+fn unary<'c, C: CustomType + 'static>(compiler: &'c mut Compiler<C>) -> TFut<'c, C> { Box::pin(compiler.unary()) }
+fn literal<'c, C: CustomType + 'static>(compiler: &'c mut Compiler<C>) -> TFut<'c, C> { Box::pin(compiler.literal()) }
+fn array<'c, C: CustomType + 'static>(compiler: &'c mut Compiler<C>) -> TFut<'c, C> { Box::pin(compiler.array()) }
+fn object<'c, C: CustomType + 'static>(compiler: &'c mut Compiler<C>) -> TFut<'c, C> { Box::pin(compiler.object()) }
+fn grouping<'c, C: CustomType + 'static>(compiler: &'c mut Compiler<C>) -> TFut<'c, C> { Box::pin(compiler.grouping()) }
+fn if_block<'c, C: CustomType + 'static>(compiler: &'c mut Compiler<C>) -> TFut<'c, C> { Box::pin(compiler.if_block()) }
+fn fn_sync<'c, C: CustomType + 'static>(compiler: &'c mut Compiler<C>) -> TFut<'c, C> { Box::pin(compiler.fn_sync()) }
+
+fn binary<'c, C: CustomType + 'static>(compiler: &'c mut Compiler<C>, intype: Type<C>) -> TFut<'c, C> {
+  Box::pin(compiler.binary(intype))
+}
+fn indot<'c, C: CustomType + 'static>(compiler: &'c mut Compiler<C>, intype: Type<C>) -> TFut<'c, C> {
+  Box::pin(compiler.indot(intype))
+}
+fn dot<'c, C: CustomType + 'static>(compiler: &'c mut Compiler<C>, intype: Type<C>) -> TFut<'c, C> {
+  Box::pin(compiler.dot(intype))
+}
+fn and<'c, C: CustomType + 'static>(compiler: &'c mut Compiler<C>, intype: Type<C>) -> TFut<'c, C> {
+  Box::pin(compiler.and(intype))
+}
+fn or<'c, C: CustomType + 'static>(compiler: &'c mut Compiler<C>, intype: Type<C>) -> TFut<'c, C> {
+  Box::pin(compiler.or(intype))
+}
+fn call<'c, C: CustomType + 'static>(compiler: &'c mut Compiler<C>, intype: Type<C>) -> TFut<'c, C> {
+  Box::pin(compiler.call(intype))
+}
 
 fn to_value<V, C>(v: &str) -> Declared<C>
 where

@@ -1,21 +1,32 @@
 //! The values representable in our language.
 
 use crate::collapsed::FuncNative;
-use crate::common::{Closure, Native, TypeNative};
-use crate::types::{CustomType, CustomValue, NoValue};
+use crate::common::{Native, TypeMatch, TypeNative};
 use serde_json::{Number, Value as Json};
 use std::cmp::PartialEq;
 use std::fmt;
 use std::sync::Arc;
 
-pub use crate::common::{Function, Globals, MorphStatus, NativeInfo};
-pub use crate::types::{NoCustom, Type};
+pub use crate::collapsed::CollapsedInfo;
+pub use crate::common::{Closure, Function, Globals, MorphStatus, NativeInfo};
+pub use crate::natives::add_std;
+pub use crate::types::{CustomType, CustomValue, NoCustom, NoValue, Type};
 
 pub fn add_native<C>(globals: &mut Globals<C>, name: impl ToString, arity: u8, native: Native<C>, typen: TypeNative<C>)
 where
   C: CustomType + 'static
 {
   let function = Function::new_native(arity, native, typen);
+  globals.insert(name.to_string(), Arc::new(function));
+}
+
+pub fn match_native<C>(
+  globals: &mut Globals<C>, name: impl ToString, arity: u8, native: Native<C>, typen: TypeNative<C>,
+  type_match: TypeMatch<C>
+) where
+  C: CustomType + 'static
+{
+  let function = Function::match_native(arity, native, typen, type_match);
   globals.insert(name.to_string(), Arc::new(function));
 }
 
@@ -494,26 +505,86 @@ fn is_eq(v1: f64, v2: f64) -> bool { (v1 - v2).abs() < f64::EPSILON }
 // ```
 
 #[macro_export]
-macro_rules! native_fn {(
-  $( #[$attr:meta] )* // includes doc strings
-  $pub:vis
-  async
-  fn $fname:ident (
-    $arg1_i:ident : $arg1_t:ty, $arg2_i:ident : $arg2_t:ty, $arg3_i:ident : &mut $arg3_t:ty
-  ) -> $Ret:ty
-  {
+macro_rules! native_fn {
+  (
+    $( #[$attr:meta] )*
+    $pub:vis
+    async
+    fn $fname:ident (
+      $arg1_i:ident : $arg1_t:ty, $arg2_i:ident : $arg2_t:ty, $arg3_i:ident : &mut $arg3_t:ty
+    ) -> $Ret:ty {
       $($body:tt)*
-  }
-) => (
-  $( #[$attr] )*
-  $pub
-  fn $fname<'r> (
-    $arg1_i : $arg1_t, $arg2_i : $arg2_t, $arg3_i : &'r mut $arg3_t
-  ) -> ::std::pin::Pin<::std::boxed::Box<dyn ::std::future::Future<Output = $Ret> + ::std::marker::Send + 'r>>
-  {
+    }
+  ) => (
+    $( #[$attr] )*
+    $pub
+    fn $fname<'r> (
+      $arg1_i : $arg1_t, $arg2_i : $arg2_t, $arg3_i : &'r mut $arg3_t
+    ) -> ::std::pin::Pin<::std::boxed::Box<dyn ::std::future::Future<Output = $Ret> + ::std::marker::Send + 'r>>
+    {
       ::std::boxed::Box::pin(async move { $($body)* })
-  }
-)}
+    }
+  );
+
+  (
+    $( #[$attr:meta] )*
+    $pub:vis
+    async
+    fn $fname:ident <C: CustomType + 'static> (
+      $arg1_i:ident : $arg1_t:ty, $arg2_i:ident : $arg2_t:ty, $arg3_i:ident : &mut $arg3_t:ty
+    ) -> $Ret:ty {
+      $($body:tt)*
+    }
+  ) => (
+    $( #[$attr] )*
+    $pub
+    fn $fname <'r, C: CustomType + 'static> (
+      $arg1_i : $arg1_t, $arg2_i : $arg2_t, $arg3_i : &'r mut $arg3_t
+    ) -> ::std::pin::Pin<::std::boxed::Box<dyn ::std::future::Future<Output = $Ret> + ::std::marker::Send + 'r>>
+    {
+      ::std::boxed::Box::pin(async move { $($body)* })
+    }
+  )
+}
+
+#[macro_export]
+macro_rules! native_tfn {
+  (
+    $( #[$attr:meta] )*
+    $pub:vis async fn $fname:ident (
+      $arg1_i:ident : $arg1_t:ty, $arg3_i:ident : &$arg3_t:ty
+    ) -> $Ret:ty {
+      $($body:tt)*
+    }
+  ) => (
+    $( #[$attr] )*
+    $pub
+    fn $fname<'r> (
+      $arg1_i : $arg1_t, $arg3_i : &'r $arg3_t
+    ) -> ::std::pin::Pin<::std::boxed::Box<dyn ::std::future::Future<Output = $Ret> + ::std::marker::Send + 'r>>
+    {
+      ::std::boxed::Box::pin(async move { $($body)* })
+    }
+  );
+
+  (
+    $( #[$attr:meta] )*
+    $pub:vis async fn $fname:ident <C:CustomType + 'static> (
+      $arg1_i:ident : $arg1_t:ty, $arg3_i:ident : &$arg3_t:ty
+    ) -> $Ret:ty {
+      $($body:tt)*
+    }
+  ) => (
+    $( #[$attr] )*
+    $pub
+    fn $fname<'r, C:CustomType + 'static> (
+      $arg1_i : $arg1_t, $arg3_i : &'r $arg3_t
+    ) -> ::std::pin::Pin<::std::boxed::Box<dyn ::std::future::Future<Output = $Ret> + ::std::marker::Send + 'r>>
+    {
+      ::std::boxed::Box::pin(async move { $($body)* })
+    }
+  )
+}
 
 #[cfg(test)]
 mod test {

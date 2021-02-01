@@ -1,9 +1,9 @@
 //! The command-line options for the executable.
 
 use alchem::errors::Result;
-use alchem::native_fn;
-use alchem::value::{add_native, Globals, MorphStatus, NativeInfo, NoCustom, Type, Value};
+use alchem::value::{add_native, CollapsedInfo, Globals, MorphStatus, NativeInfo, NoCustom, Type, Value};
 use alchem::vm::{Runner, Vm};
+use alchem::{native_fn, native_tfn};
 use clap::{crate_version, App, AppSettings, Arg, ArgMatches};
 use macro_rules_attribute::macro_rules_attribute;
 
@@ -49,32 +49,35 @@ async fn run_file(input: &str) -> Result<()> {
 }
 
 type Val = Value<NoCustom>;
-type Info = NativeInfo<NoCustom>;
+type CoInfo = CollapsedInfo<NoCustom>;
 type Run = Runner<NoCustom>;
 type Tp = Type<NoCustom>;
 type Gl = Globals<NoCustom>;
 type Status = MorphStatus<NoCustom>;
 
-fn ntvt_print(_args: Vec<Tp>, _globals: &Gl) -> Status {
+#[macro_rules_attribute(native_tfn!)]
+async fn ntvt_print(_args: Vec<Tp>, _globals: &Gl) -> Status {
   let info = NativeInfo::new();
   MorphStatus::NativeCompleted(info, Type::Number)
 }
 
 #[macro_rules_attribute(native_fn!)]
-async fn ntv_print(vals: Vec<Val>, _info: Info, _runner: &mut Run) -> Val {
+async fn ntv_print(vals: Vec<Val>, _info: CoInfo, _runner: &mut Run) -> Val {
   println!("*** PRINT: {:?}", vals[0]);
   Value::Int(1)
 }
 
-fn ntvt_number(_: Vec<Tp>, _: &Gl) -> Status { MorphStatus::NativeCompleted(NativeInfo::new(), Type::Number) }
+#[macro_rules_attribute(native_tfn!)]
+async fn ntvt_number(_a: Vec<Tp>, _b: &Gl) -> Status { MorphStatus::NativeCompleted(NativeInfo::new(), Type::Number) }
 
 #[macro_rules_attribute(native_fn!)]
-async fn ntv_number(_argv: Vec<Val>, _info: Info, _runner: &mut Run) -> Val { Value::Int(42) }
+async fn ntv_number(_argv: Vec<Val>, _info: CoInfo, _runner: &mut Run) -> Val { Value::Int(42) }
 
-fn ntvt_recall(args: Vec<Tp>, globals: &Gl) -> Status {
+#[macro_rules_attribute(native_tfn!)]
+async fn ntvt_recall(args: Vec<Tp>, globals: &Gl) -> Status {
   let mut info = NativeInfo::new();
   let func = args[0].as_function().upgrade().unwrap();
-  let (inst_ind, ftype) = func.find_or_build(Vec::new(), globals);
+  let (inst_ind, ftype) = func.clone().find_or_build(Vec::new(), globals).await;
 
   if let Some(ftype) = ftype {
     info.add_call_index(inst_ind);
@@ -85,7 +88,7 @@ fn ntvt_recall(args: Vec<Tp>, globals: &Gl) -> Status {
 }
 
 #[macro_rules_attribute(native_fn!)]
-async fn ntv_recall(vals: Vec<Val>, info: Info, runner: &mut Run) -> Val {
+async fn ntv_recall(vals: Vec<Val>, info: CoInfo, runner: &mut Run) -> Val {
   let f = vals[0].as_closure();
   let inst_ind = info.call_indexes()[0];
   runner.run_closure(f, inst_ind, Vec::new()).await

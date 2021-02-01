@@ -56,11 +56,11 @@ async fn unify_diff_r() { expectj_f64("=2-to_json(1)", 1.0).await; }
 
 #[tokio::test]
 #[should_panic]
-async fn fail_fn_to_json() { expectj_f64("=to_json(fn(){=1})", 1.0).await; }
+async fn fn_to_json_fail() { expectj_f64("=to_json(fn(){=1})", 1.0).await; }
 
 #[tokio::test]
 #[should_panic]
-async fn fail_nest_to_json() { expectj_f64("=to_json([fn(){=1}])", 1.0).await; }
+async fn nest_to_json_fail() { expectj_f64("=to_json([fn(){=1}])", 1.0).await; }
 
 #[tokio::test]
 async fn double_convert() { expectj_f64("=to_json(to_json(1))", 1.0).await; }

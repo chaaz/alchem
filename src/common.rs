@@ -1,6 +1,6 @@
 //! Common info for the parser.
 
-use crate::collapsed::CollapsedType;
+use crate::collapsed::{CollapsedInfo, CollapsedType};
 use crate::compiler::Compiler;
 use crate::scanner::Token;
 use crate::scope::ZeroMode;
@@ -17,8 +17,10 @@ const MAX_CONSTANTS: usize = 255;
 const MAX_MONOMORPHS: usize = 20;
 
 pub type Native<C> =
-  for<'r> fn(Vec<Value<C>>, NativeInfo<C>, &'r mut Runner<C>) -> Pin<Box<dyn Future<Output = Value<C>> + Send + 'r>>;
-pub type TypeNative<C> = fn(Vec<Type<C>>, &Globals<C>) -> MorphStatus<C>;
+  for<'r> fn(Vec<Value<C>>, CollapsedInfo<C>, &'r mut Runner<C>) -> Pin<Box<dyn Future<Output = Value<C>> + Send + 'r>>;
+pub type TypeNative<C> =
+  for<'r> fn(Vec<Type<C>>, &'r Globals<C>) -> Pin<Box<dyn Future<Output = MorphStatus<C>> + Send + 'r>>;
+pub type TypeMatch<C> = fn(&[Type<C>], &[Type<C>]) -> bool;
 pub type ObjUpvalues<C> = Mutex<Vec<ObjUpvalue<C>>>;
 pub type Globals<C> = HashMap<String, Arc<Function<C>>>;
 pub type KnownUpvals<C> = HashMap<String, (usize, Type<C>)>;
@@ -28,11 +30,6 @@ pub struct Function<C: CustomType> {
   fn_type: FnType<C>,
   instances: Mutex<Vec<Monomorph<C>>>,
   known_upvals: KnownUpvals<C>
-}
-
-pub enum FnType<C: CustomType> {
-  Native(Native<C>, TypeNative<C>),
-  Alchem(Vec<String>, Vec<Token>)
 }
 
 impl<C: CustomType> fmt::Debug for Function<C> {
@@ -66,13 +63,19 @@ impl<C: CustomType + 'static> Function<C> {
     Function { arity, fn_type: FnType::Alchem(param_names, code), instances: Mutex::new(Vec::new()), known_upvals }
   }
 
-  pub fn new_native(arity: u8, native: Native<C>, type_native: TypeNative<C>) -> Function<C> {
+  pub fn match_native(
+    arity: u8, native: Native<C>, type_native: TypeNative<C>, type_match: TypeMatch<C>
+  ) -> Function<C> {
     Function {
       arity,
-      fn_type: FnType::Native(native, type_native),
+      fn_type: FnType::Native(native, type_native, type_match),
       instances: Mutex::new(Vec::new()),
       known_upvals: HashMap::new()
     }
+  }
+
+  pub fn new_native(arity: u8, native: Native<C>, type_native: TypeNative<C>) -> Function<C> {
+    Function::match_native(arity, native, type_native, default_typematch)
   }
 
   pub fn is_single_use(&self) -> bool { self.known_upvals.values().any(|(_, t)| t.is_single_use()) }
@@ -86,11 +89,16 @@ impl<C: CustomType + 'static> Function<C> {
     self.arity
   }
 
-  pub fn find_or_build(self: &Arc<Function<C>>, args: Vec<Type<C>>, globals: &Globals<C>) -> (usize, Option<Type<C>>) {
-    self.find_known_type(&args).unwrap_or_else(|| {
-      let inst_ind = self.reserve_inst(args);
-      (inst_ind, self.replay(inst_ind, globals))
-    })
+  pub async fn find_or_build(
+    self: Arc<Function<C>>, args: Vec<Type<C>>, globals: &Globals<C>
+  ) -> (usize, Option<Type<C>>) {
+    match self.find_known_type(&args) {
+      Some(found) => found,
+      None => {
+        let inst_ind = self.reserve_inst(args);
+        (inst_ind, self.replay(inst_ind, globals).await)
+      }
+    }
   }
 
   pub fn known_type(&self, inst_ind: usize) -> Option<Type<C>> {
@@ -100,19 +108,25 @@ impl<C: CustomType + 'static> Function<C> {
 
   pub fn find_known_type(&self, args: &[Type<C>]) -> Option<(usize, Option<Type<C>>)> {
     let instances = self.instances.try_lock().unwrap();
-    instances.iter().enumerate().find(|(_, m)| m.args == args).map(|(i, m)| (i, m.known_type()))
+    if let FnType::Native(_, _, tm) = self.fn_type() {
+      instances.iter().enumerate().find(|(_, m)| tm(&m.args, args)).map(|(i, m)| (i, m.known_type()))
+    } else {
+      instances.iter().enumerate().find(|(_, m)| m.args == args).map(|(i, m)| (i, m.known_type()))
+    }
   }
 
   pub fn reserve_inst(&self, args: Vec<Type<C>>) -> usize {
     let mut instances = self.instances.try_lock().unwrap();
     instances.push(Monomorph::new(args));
-    if instances.len() > MAX_MONOMORPHS {
-      panic!("Too many function instances: {}", instances.len());
+    if !self.fn_type().is_native() && instances.len() > MAX_MONOMORPHS {
+      panic!("Too many non-native function instances: {}", instances.len());
     }
     instances.len() - 1
   }
 
-  pub fn replay_if_ready(self: &Arc<Function<C>>, inst_ind: usize, globals: &Globals<C>) -> Option<Type<C>> {
+  pub fn replay_if_ready<'s>(
+    self: Arc<Function<C>>, inst_ind: usize, globals: &'s Globals<C>
+  ) -> Pin<Box<dyn Future<Output = Option<Type<C>>> + Send + 's>> {
     let (needs_rebuild, build_deps, needs_type, type_deps) = {
       let instances = self.instances.try_lock().unwrap();
       let morph = &instances[inst_ind];
@@ -126,14 +140,22 @@ impl<C: CustomType + 'static> Function<C> {
       (needs_rebuild, build_deps, needs_type, type_deps)
     };
 
-    if (needs_rebuild && build_deps.iter().all(|d| d.is_known())) || (needs_type && type_deps.is_known()) {
-      self.replay(inst_ind, globals)
-    } else {
-      self.known_type(inst_ind)
-    }
+    Box::pin(async move {
+      if (needs_rebuild && build_deps.iter().all(|d| d.is_known())) || (needs_type && type_deps.is_known()) {
+        self.replay(inst_ind, globals).await
+      } else {
+        self.known_type(inst_ind)
+      }
+    })
   }
 
-  pub fn replay(self: &Arc<Function<C>>, inst_ind: usize, globals: &Globals<C>) -> Option<Type<C>> {
+  pub fn replay<'s>(
+    self: Arc<Function<C>>, inst_ind: usize, globals: &'s Globals<C>
+  ) -> Pin<Box<dyn Future<Output = Option<Type<C>>> + Send + 's>> {
+    Box::pin(self.do_replay(inst_ind, globals))
+  }
+
+  async fn do_replay(self: Arc<Function<C>>, inst_ind: usize, globals: &Globals<C>) -> Option<Type<C>> {
     // TODO(later): protect against indeterminate recursive types, by ensuring that the type deps for a function
     // does not depend strictly on itself or at all on any of its other instances.
     //
@@ -153,12 +175,12 @@ impl<C: CustomType + 'static> Function<C> {
     self.unlink_all(inst_ind);
 
     let status = match self.fn_type() {
-      FnType::Native(_, type_fn) => (type_fn)(args, globals),
+      FnType::Native(_, type_fn, _) => (type_fn)(args, globals).await,
       FnType::Alchem(pnames, code) => {
-        let self_index = MorphIndex::weak(self, inst_ind);
+        let self_index = MorphIndex::weak(&self, inst_ind);
         let code = code.clone().into_iter();
         let compiler = Compiler::<C>::replay(pnames.clone(), args, code, self.known_upvals.clone(), globals);
-        let (scope_zero, rtype) = compiler.compile();
+        let (scope_zero, rtype) = compiler.compile().await;
 
         match scope_zero.into_mode() {
           ZeroMode::Emitting(chunk) => MorphStatus::Completed(chunk, rtype),
@@ -220,10 +242,10 @@ impl<C: CustomType + 'static> Function<C> {
 
     if let Some((type_deps, build_deps)) = ready_deps {
       for index in type_deps {
-        index.replay_if_ready(globals);
+        index.replay_if_ready(globals).await;
       }
       for index in build_deps {
-        index.replay_if_ready(globals);
+        index.replay_if_ready(globals).await;
       }
     }
 
@@ -258,6 +280,17 @@ impl<C: CustomType + 'static> Function<C> {
     }
   }
 }
+
+pub enum FnType<C: CustomType> {
+  Native(Native<C>, TypeNative<C>, TypeMatch<C>),
+  Alchem(Vec<String>, Vec<Token>)
+}
+
+impl<C: CustomType> FnType<C> {
+  fn is_native(&self) -> bool { matches!(self, Self::Native(..)) }
+}
+
+fn default_typematch<C: CustomType>(t1: &[Type<C>], t2: &[Type<C>]) -> bool { t1 == t2 }
 
 pub struct Monomorph<C: CustomType> {
   args: Vec<Type<C>>,
@@ -312,7 +345,8 @@ impl<C: CustomType + 'static> MorphStatus<C> {
 #[derive(Clone)]
 pub struct NativeInfo<C: CustomType> {
   call_indexes: Vec<usize>,
-  collapsed: Vec<CollapsedType<C>>
+  collapsed: Vec<CollapsedType<C>>,
+  eval_functions: Vec<Arc<Function<C>>>
 }
 
 impl<C: CustomType> Default for NativeInfo<C> {
@@ -320,12 +354,19 @@ impl<C: CustomType> Default for NativeInfo<C> {
 }
 
 impl<C: CustomType> NativeInfo<C> {
-  pub fn new() -> NativeInfo<C> { NativeInfo { call_indexes: Vec::new(), collapsed: Vec::new() } }
+  pub fn new() -> NativeInfo<C> {
+    NativeInfo { call_indexes: Vec::new(), collapsed: Vec::new(), eval_functions: Vec::new() }
+  }
+
   pub fn add_call_index(&mut self, ci: usize) { self.call_indexes.push(ci); }
-  pub fn call_indexes(&self) -> &[usize] { &self.call_indexes }
   pub fn add_type(&mut self, t: CollapsedType<C>) { self.collapsed.push(t); }
-  pub fn types(&self) -> &[CollapsedType<C>] { &self.collapsed }
-  pub fn into_types(self) -> Vec<CollapsedType<C>> { self.collapsed }
+  pub fn add_eval_function(&mut self, t: Arc<Function<C>>) { self.eval_functions.push(t); }
+
+  #[allow(clippy::type_complexity)]
+  pub fn into_parts(self) -> (Vec<usize>, Vec<CollapsedType<C>>, Vec<Arc<Function<C>>>) {
+    let NativeInfo { call_indexes, collapsed, eval_functions } = self;
+    (call_indexes, collapsed, eval_functions)
+  }
 }
 
 #[derive(Clone, Debug)]
@@ -351,8 +392,11 @@ impl<C: CustomType + 'static> MorphIndex<C> {
 
   pub fn is_known(&self) -> bool { self.operate_morph(|morph| morph.is_known()).unwrap_or(true) }
 
-  fn replay_if_ready(&self, globals: &Globals<C>) -> Option<Option<Type<C>>> {
-    self.operate_func(|func, inst_ind| func.replay_if_ready(inst_ind, globals))
+  async fn replay_if_ready(&self, globals: &Globals<C>) -> Option<Option<Type<C>>> {
+    match self.function.upgrade() {
+      Some(func) => Some(func.replay_if_ready(self.inst_index, globals).await),
+      None => None
+    }
   }
 
   pub fn add_build_dependency(&self, i: MorphIndex<C>) {
@@ -385,10 +429,6 @@ impl<C: CustomType + 'static> MorphIndex<C> {
 
   pub fn remove_type_dependent(&self, i: MorphIndex<C>) {
     self.operate_morph(|morph| morph.type_dependents.retain(|d| &i != d));
-  }
-
-  fn operate_func<T: 'static, F: FnOnce(Arc<Function<C>>, usize) -> T>(&self, f: F) -> Option<T> {
-    self.function.upgrade().map(|func| f(func, self.inst_index))
   }
 
   fn operate_morph<T: 'static, F: FnOnce(&mut Monomorph<C>) -> T>(&self, f: F) -> Option<T> {

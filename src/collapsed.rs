@@ -3,7 +3,8 @@
 //! It may be helpful to think of the types defined here are the "real" types, and their equivalents in `common`
 //! and `value` as builders.
 
-use crate::common::{Instr, MorphStatus, Native, NativeInfo};
+use crate::common::{Closure, Instr, MorphStatus, Native, NativeInfo};
+use crate::compiler::script_to_closure;
 use crate::types::{Array, CustomType, Object, Type};
 use crate::value::Value;
 use std::fmt;
@@ -133,7 +134,7 @@ pub fn collapse_function<C: CustomType + 'static>(f: Arc<crate::common::Function
   use crate::common::FnType;
 
   match f.fn_type() {
-    FnType::Native(ntv, _) => Declared::Native(Arc::new(FuncNative::from_common(*ntv, f))),
+    FnType::Native(ntv, ..) => Declared::Native(Arc::new(FuncNative::from_common(*ntv, f))),
     FnType::Alchem(..) => Declared::Function(Arc::new(Function::from_common(f)))
   }
 }
@@ -141,7 +142,7 @@ pub fn collapse_function<C: CustomType + 'static>(f: Arc<crate::common::Function
 pub struct FuncNative<C: CustomType> {
   arity: u8,
   native: Native<C>,
-  instances: Vec<NativeInfo<C>>
+  instances: Vec<CollapsedInfo<C>>
 }
 
 impl<C: CustomType> fmt::Debug for FuncNative<C> {
@@ -158,7 +159,7 @@ impl<C: CustomType + 'static> FuncNative<C> {
     let instances = morphs
       .into_iter()
       .map(|i| match i.into_status() {
-        MorphStatus::NativeCompleted(ninfo, _) => ninfo,
+        MorphStatus::NativeCompleted(ninfo, _) => CollapsedInfo::from_common(ninfo),
         _ => panic!("Native instance not completed natively.")
       })
       .collect();
@@ -168,7 +169,27 @@ impl<C: CustomType + 'static> FuncNative<C> {
 
   pub fn arity(&self) -> u8 { self.arity }
   pub fn native(&self) -> &Native<C> { &self.native }
-  pub fn instances(&self) -> &[NativeInfo<C>] { &self.instances }
+  pub fn instances(&self) -> &[CollapsedInfo<C>] { &self.instances }
+}
+
+#[derive(Clone)]
+pub struct CollapsedInfo<C: CustomType> {
+  call_indexes: Vec<usize>,
+  collapsed: Vec<CollapsedType<C>>,
+  eval_functions: Vec<Arc<Closure<C>>>
+}
+
+impl<C: CustomType + 'static> CollapsedInfo<C> {
+  pub fn from_common(i: NativeInfo<C>) -> CollapsedInfo<C> {
+    let (call_indexes, collapsed, eval_functions) = i.into_parts();
+    let eval_functions = eval_functions.into_iter().map(script_to_closure).collect();
+    CollapsedInfo { call_indexes, collapsed, eval_functions }
+  }
+
+  pub fn call_indexes(&self) -> &[usize] { &self.call_indexes }
+  pub fn types(&self) -> &[CollapsedType<C>] { &self.collapsed }
+  pub fn eval_functions(&self) -> &[Arc<Closure<C>>] { &self.eval_functions }
+  pub fn into_types(self) -> Vec<CollapsedType<C>> { self.collapsed }
 }
 
 pub struct Function<C: CustomType> {

@@ -1,20 +1,24 @@
 //! Some JSON-based native functions for alchem testing.
 
 use alchem::collapsed::CollapsedType;
-use alchem::native_fn;
-use alchem::value::{Globals, MorphStatus, NativeInfo, NoCustom, Type, Value};
+use alchem::value::{add_native, CollapsedInfo, Globals, MorphStatus, NativeInfo, NoCustom, Type, Value};
 use alchem::vm::Runner;
+use alchem::{native_fn, native_tfn};
 use macro_rules_attribute::macro_rules_attribute;
 use serde_json::{Number, Value as Json};
 
 type Val = Value<NoCustom>;
 type Info = NativeInfo<NoCustom>;
+type CoInfo = CollapsedInfo<NoCustom>;
 type Run = Runner<NoCustom>;
 type Tp = Type<NoCustom>;
 type Gl = Globals<NoCustom>;
 type Status = MorphStatus<NoCustom>;
 
-pub fn ntvt_to_json(args: Vec<Tp>, _globals: &Gl) -> Status {
+pub fn add_all_natives(globals: &mut Gl) { add_native(globals, "to_json", 1, ntv_to_json, ntvt_to_json); }
+
+#[macro_rules_attribute(native_tfn!)]
+async fn ntvt_to_json(args: Vec<Tp>, _globals: &Gl) -> Status {
   let mut info = Info::new();
   assert_eq!(args.len(), 1);
   info.add_type(CollapsedType::from_common(&args[0]));
@@ -22,7 +26,7 @@ pub fn ntvt_to_json(args: Vec<Tp>, _globals: &Gl) -> Status {
 }
 
 #[macro_rules_attribute(native_fn!)]
-pub async fn ntv_to_json(vals: Vec<Val>, info: Info, _runner: &mut Run) -> Val {
+async fn ntv_to_json(vals: Vec<Val>, info: CoInfo, _runner: &mut Run) -> Val {
   let val = vals.into_iter().next().unwrap();
   let col_type = info.into_types().into_iter().next().unwrap();
   Value::Json(convert_to_json(val, col_type))

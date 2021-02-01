@@ -1,8 +1,8 @@
 //! The actual VM for parsing the bytecode.
 
-use crate::collapsed::{Chunk, Declared, FuncNative};
-use crate::common::{Closure, Instr, Native, NativeInfo, ObjUpvalue, ObjUpvalues, Opcode};
-use crate::compiler::{collapse_script, compile};
+use crate::collapsed::{Chunk, CollapsedInfo, Declared, FuncNative};
+use crate::common::{Closure, Instr, Native, ObjUpvalue, ObjUpvalues, Opcode};
+pub use crate::compiler::{collapse_script, compile, script_to_closure};
 use crate::inline::Inline;
 use crate::types::CustomType;
 use crate::value::Value;
@@ -36,8 +36,8 @@ impl<C: CustomType + 'static> Vm<C> {
     debug_assert_eq!(self.call_stack.len(), 0);
 
     // last minute code changes
-    let (script, stype) = compile(source, &globals);
-    let (function, inst_ind, globals) = collapse_script(script, stype, globals);
+    let (scope, stype) = compile(source, &globals).await;
+    let (function, inst_ind, globals) = collapse_script(scope, stype, globals);
 
     // lock it in
     let function = Arc::new(function);
@@ -165,7 +165,7 @@ impl<C: CustomType + 'static> Runner<C> {
 pub struct NativeRun<C: CustomType> {
   native: Native<C>,
   args: Vec<Value<C>>,
-  native_info: NativeInfo<C>
+  native_info: CollapsedInfo<C>
 }
 
 impl<C: CustomType + 'static> NativeRun<C> {
