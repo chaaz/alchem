@@ -221,12 +221,7 @@ pub enum TokenType {
 }
 
 impl TokenType {
-  pub fn as_identifier(&self) -> &str {
-    match self {
-      Self::Identifier(s) => s,
-      other => panic!("Not an identifier: {:?}", other)
-    }
-  }
+  pub fn as_identifier(&self) -> &str { pick!(self, Self::Identifier(s) => s, "Not an identifier: {:?}") }
 
   pub fn is_error(&self) -> bool { matches!(self, TokenType::Error(_)) }
   pub fn discr(&self) -> TokenTypeDiscr {

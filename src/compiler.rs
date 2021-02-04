@@ -622,7 +622,7 @@ where
         if ltype.is_depends() && rtype.is_depends() {
           rtype = rtype.and_depends(ltype.clone());
         } else if ltype.is_string_literal() && rtype.is_string_literal() {
-          rtype = Type::String(Some(format!("{}{}", ltype.string_literal(), rtype.string_literal())));
+          rtype = Type::String(Some(format!("{}{}", ltype.as_string_literal(), rtype.as_string_literal())));
         } else if ltype.is_string() && rtype.is_string_literal() {
           rtype = Type::String(None);
         } else if ltype.is_depends() {

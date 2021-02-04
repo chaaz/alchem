@@ -98,82 +98,19 @@ impl From<NoValue> for Value<NoCustom> {
 impl<C: CustomType> Value<C> {
   pub fn cloneable(&self) -> bool { true }
 
-  pub fn as_float(&self) -> f64 {
-    match self {
-      Self::Float(v) => *v,
-      _ => panic!("Not a float: {:?}", self)
-    }
-  }
+  pub fn as_int(&self) -> i32 { pick!(self, Self::Int(v) => *v, "Not an int: {:?}") }
+  pub fn as_float(&self) -> f64 { pick!(self, Self::Float(v) => *v, "Not a float: {:?}") }
+  pub fn as_str(&self) -> &str { pick!(self, Self::String(v) => v, "Not a string: {:?}") }
+  pub fn as_custom(&self) -> &C::Value { pick!(self, Self::Custom(v) => v, "Not an custom type: {:?}") }
+  pub fn as_bool(&self) -> bool { pick!(self, Self::Bool(v) => *v, "Not a boolean: {:?}") }
+  pub fn as_closure(&self) -> Arc<Closure<C>> { pick!(self, Self::Closure(v) => v.clone(), "Not a closure: {:?}") }
+  pub fn as_json(&self) -> &Json { pick!(self, Self::Json(v) => v, "Not JSON: {:?}") }
+  pub fn as_json_mut(&mut self) -> &mut Json { pick!(self, Self::Json(v) => v, "Not json: {:?}") }
+  pub fn as_array_mut(&mut self) -> &mut Vec<Value<C>> { pick!(self, Self::Array(v) => v, "Not an array: {:?}") }
 
-  pub fn as_str(&self) -> &str {
-    match self {
-      Self::String(v) => v,
-      _ => panic!("Not a string: {:?}", self)
-    }
-  }
-
-  pub fn into_native(self) -> Arc<FuncNative<C>> {
-    match self {
-      Self::Native(v) => v,
-      _ => panic!("Not a native function: {:?}", self)
-    }
-  }
-
-  pub fn into_string(self) -> String {
-    match self {
-      Self::String(v) => v.to_string(),
-      _ => panic!("Not a string: {:?}", self)
-    }
-  }
-
-  pub fn as_custom(&self) -> &C::Value {
-    match self {
-      Self::Custom(v) => v,
-      _ => panic!("Not an custom type: {:?}", self)
-    }
-  }
-
-  pub fn into_custom(self) -> C::Value {
-    match self {
-      Self::Custom(v) => v,
-      _ => panic!("Not an custom type: {:?}", self)
-    }
-  }
-
-  pub fn as_int(&self) -> i32 {
-    match self {
-      Self::Int(v) => *v,
-      _ => panic!("Not an int: {:?}", self)
-    }
-  }
-
-  pub fn as_bool(&self) -> bool {
-    match self {
-      Self::Bool(v) => *v,
-      _ => panic!("Not a boolean: {:?}", self)
-    }
-  }
-
-  pub fn as_json_mut(&mut self) -> &mut Json {
-    match self {
-      Self::Json(v) => v,
-      _ => panic!("Not an array.")
-    }
-  }
-
-  pub fn as_array_mut(&mut self) -> &mut Vec<Value<C>> {
-    match self {
-      Self::Array(v) => v,
-      _ => panic!("Not an array.")
-    }
-  }
-
-  pub fn as_closure(&self) -> Arc<Closure<C>> {
-    match self {
-      Self::Closure(v) => v.clone(),
-      _ => panic!("Not a closure: {:?}", self)
-    }
-  }
+  pub fn into_native(self) -> Arc<FuncNative<C>> { pick!(self, Self::Native(v) => v, "Not a native function: {:?}") }
+  pub fn into_string(self) -> String { pick!(self, Self::String(v) => v.to_string(), "Not a string: {:?}") }
+  pub fn into_custom(self) -> C::Value { pick!(self, Self::Custom(v) => v, "Not an custom type: {:?}") }
 
   // `shift` acts like `clone` for most value types, but for mutable or otherwise un-cloneable values, it will
   // instead take the value, leaving a void in its place.
@@ -488,12 +425,7 @@ impl<C: CustomType> From<Arc<Function<C>>> for Declared<C> {
 }
 
 impl<C: CustomType> Declared<C> {
-  pub fn as_str(&self) -> Option<&str> {
-    match self {
-      Self::String(s) => Some(s),
-      _ => None
-    }
-  }
+  pub fn as_str(&self) -> Option<&str> { pick_opt!(self, Self::String(s) => s) }
 }
 
 fn concat(v1: &impl ToString, v2: &impl ToString) -> String { format!("{}{}", v1.to_string(), v2.to_string()) }

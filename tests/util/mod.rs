@@ -1,61 +1,75 @@
 //! Test utility.
 
-mod jsons;
 mod natives;
 
-use alchem::value::{Globals, NoCustom, Value};
+use alchem::value::{Globals, NoCustom};
 use alchem::vm::Vm;
 use serde_json::{Number, Value as Json};
 
 type Map = serde_json::Map<String, Json>;
 
 #[allow(dead_code)]
-pub async fn expect<V: Into<Value<NoCustom>>>(script: &str, expected: V) {
-  let vm = Vm::new(());
-  assert_eq!(vm.interpret(script, new_globals()).await, expected.into());
+pub async fn expect_bool(script: &str, expected: bool) {
+  assert_eq!(Vm::new(()).interpret(script, globals()).await.as_bool(), expected);
 }
 
 #[allow(dead_code)]
-pub async fn expectn<V: Into<Value<NoCustom>>>(script: &str, expected: V) {
-  let vm = Vm::new(());
-
-  let mut globals = new_globals();
-  natives::add_all_natives(&mut globals);
-
-  assert_eq!(vm.interpret(script, globals).await, expected.into());
+pub async fn expect_i32(script: &str, expected: i32) {
+  assert_eq!(Vm::new(()).interpret(script, globals()).await.as_int(), expected);
 }
 
 #[allow(dead_code)]
-pub async fn expectj<V: Into<Value<NoCustom>>>(script: &str, expected: V) {
-  let vm = Vm::new(());
-
-  let mut globals = new_globals();
-  jsons::add_all_natives(&mut globals);
-
-  let expc = expected.into();
-  assert_eq!(vm.interpret(script, globals).await, expc);
+pub async fn expect_f64(script: &str, expected: f64) {
+  assert_eq!(Vm::new(()).interpret(script, globals()).await.as_float(), expected);
 }
 
 #[allow(dead_code)]
-pub async fn expectj_f64(script: &str, expected: f64) { expectj(script, n(expected)).await }
-
-#[allow(dead_code)]
-pub async fn expectj_bool(script: &str, expected: bool) { expectj(script, Json::Bool(expected)).await }
-
-#[allow(dead_code)]
-pub async fn expectj_str(script: &str, expected: &str) { expectj(script, Json::String(expected.to_string())).await }
-
-#[allow(dead_code)]
-pub async fn expectj_array(script: &str, expected: &[f64]) {
-  expectj(script, Json::Array(expected.iter().copied().map(n).collect())).await
+pub async fn expect_str(script: &str, expected: &str) {
+  assert_eq!(Vm::new(()).interpret(script, globals()).await.as_str(), expected);
 }
 
 #[allow(dead_code)]
-pub async fn expectj_vec(script: &str, expected: Vec<Json>) { expectj(script, Json::Array(expected)).await }
+pub async fn expect_json_bool(script: &str, expected: bool) {
+  assert_eq!(Vm::new(()).interpret(script, globals()).await.as_json().as_bool().unwrap(), expected);
+}
 
 #[allow(dead_code)]
-pub async fn expectj_obj(script: &str, expected: Map) { expectj(script, Json::Object(expected)).await }
+pub async fn expect_json_i64(script: &str, expected: i64) {
+  assert_eq!(Vm::new(()).interpret(script, globals()).await.as_json().as_i64().unwrap(), expected);
+}
+
+#[allow(dead_code)]
+pub async fn expect_json_f64(script: &str, expected: f64) {
+  assert_eq!(Vm::new(()).interpret(script, globals()).await.as_json().as_f64().unwrap(), expected);
+}
+
+#[allow(dead_code)]
+pub async fn expect_json_str(script: &str, expected: &str) {
+  assert_eq!(Vm::new(()).interpret(script, globals()).await.as_json().as_str().unwrap(), expected);
+}
+
+#[allow(dead_code)]
+pub async fn expect_array_f64(script: &str, expected: &[f64]) {
+  assert_eq!(
+    Vm::new(()).interpret(script, globals()).await.as_json(),
+    &Json::Array(expected.iter().copied().map(n).collect())
+  )
+}
+
+#[allow(dead_code)]
+pub async fn expect_vec_json(script: &str, expected: Vec<Json>) {
+  assert_eq!(Vm::new(()).interpret(script, globals()).await.as_json(), &Json::Array(expected))
+}
+
+#[allow(dead_code)]
+pub async fn expect_map_json(script: &str, expected: Map) {
+  assert_eq!(Vm::new(()).interpret(script, globals()).await.as_json(), &Json::Object(expected))
+}
 
 pub fn n(v: f64) -> Json { Json::Number(Number::from_f64(v).unwrap()) }
 
-pub fn new_globals() -> Globals<NoCustom> { Globals::new() }
+fn globals() -> Globals<NoCustom> {
+  let mut globals = Globals::new();
+  natives::add_all_natives(&mut globals);
+  globals
+}

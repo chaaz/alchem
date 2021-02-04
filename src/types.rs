@@ -92,7 +92,6 @@ impl<C> Type<C>
 where
   C: CustomType + 'static
 {
-  pub fn is_depends(&self) -> bool { matches!(self, Self::DependsOn(_)) }
   pub fn and_depends(self, other: Self) -> Type<C> { Type::DependsOn(self.into_depends().and(other.into_depends())) }
   pub fn or_depends(self, other: Self) -> Type<C> { Type::DependsOn(self.into_depends().or(other.into_depends())) }
 
@@ -100,9 +99,14 @@ where
     Type::DependsOn(DependsOn::unit(MorphIndex::weak(func, inst_ind)))
   }
 
+  pub fn is_depends(&self) -> bool { matches!(self, Self::DependsOn(_)) }
   pub fn is_object(&self) -> bool { matches!(self, Type::Object(..)) }
   pub fn is_array(&self) -> bool { matches!(self, Type::Array(..)) }
   pub fn is_function(&self) -> bool { matches!(self, Type::FnSync(..)) }
+  pub fn is_json(&self) -> bool { matches!(self, Self::Json) }
+  pub fn is_known(&self) -> bool { !matches!(self, Self::DependsOn(_) | Self::Unset) }
+  pub fn is_string(&self) -> bool { matches!(self, Self::String(_)) }
+  pub fn is_string_literal(&self) -> bool { matches!(self, Self::String(Some(_))) }
 
   pub fn is_single_use(&self) -> bool {
     match self {
@@ -115,90 +119,22 @@ where
     }
   }
 
-  pub fn is_json(&self) -> bool { matches!(self, Self::Json) }
-
-  pub fn as_custom(&self) -> &C {
-    match self {
-      Self::Custom(c) => c,
-      other => panic!("Not a custom type: {:?}", other)
-    }
-  }
-
-  pub fn as_custom_mut(&mut self) -> &mut C {
-    match self {
-      Self::Custom(c) => c,
-      other => panic!("Not a custom type: {:?}", other)
-    }
-  }
-
-  pub fn into_custom(self) -> C {
-    match self {
-      Self::Custom(c) => c,
-      other => panic!("Not a custom type: {:?}", other)
-    }
-  }
-
-  pub fn into_depends(self) -> DependsOn<C> {
-    match self {
-      Self::DependsOn(d) => d,
-      _ => panic!("Not a dependent type.")
-    }
-  }
-
-  pub fn depends_iter(&self) -> impl Iterator<Item = &MorphIndex<C>> {
-    match self {
-      Self::DependsOn(d) => d.index_iter(),
-      _ => panic!("Not a dependent type.")
-    }
-  }
-
-  pub fn is_known(&self) -> bool { !matches!(self, Self::DependsOn(_) | Self::Unset) }
+  pub fn as_custom(&self) -> &C { pick!(self, Self::Custom(c) => c, "Not a custom type: {:?}") }
+  pub fn as_custom_mut(&mut self) -> &mut C { pick!(self, Self::Custom(c) => c, "Not a custom type: {:?}") }
+  pub fn as_array(&self) -> &Array<C> { pick!(self, Self::Array(a) => a, "Not an array: {:?}") }
+  pub fn as_depends(&self) -> &DependsOn<C> { pick!(self, Self::DependsOn(d) => d, "Not a dependent type: {:?}") }
+  pub fn depends_iter(&self) -> impl Iterator<Item = &MorphIndex<C>> { self.as_depends().index_iter() }
+  pub fn as_object(&self) -> &Object<C> { pick!(self, Self::Object(o) => o, "Not an object: {:?}") }
+  pub fn as_string_literal(&self) -> &str { pick!(self, Self::String(Some(s)) => s, "Not a string literal: {:?}") }
+  pub fn as_string(&self) -> &Option<String> { pick!(self, Self::String(s) => s, "Not a string type: {:?}") }
 
   pub fn as_function(&self) -> Weak<Function<C>> {
-    match self {
-      Self::FnSync(f) => f.clone(),
-      other => panic!("Type {:?} is not a function.", other)
-    }
+    pick!(self, Self::FnSync(f) => f.clone(), "Type {:?} is not a function.")
   }
 
-  pub fn as_array(&self) -> &Array<C> {
-    match self {
-      Self::Array(a) => a,
-      other => panic!("Type {:?} is not an array.", other)
-    }
-  }
-
-  pub fn as_object(&self) -> &Object<C> {
-    match self {
-      Self::Object(o) => o,
-      other => panic!("Type {:?} is not an object.", other)
-    }
-  }
-
-  pub fn into_object(self) -> Arc<Object<C>> {
-    match self {
-      Self::Object(o) => o,
-      other => panic!("Type {:?} is not an object.", other)
-    }
-  }
-
-  pub fn is_string(&self) -> bool { matches!(self, Self::String(_)) }
-
-  pub fn is_string_literal(&self) -> bool { matches!(self, Self::String(Some(_))) }
-
-  pub fn string_literal(&self) -> &str {
-    match self {
-      Self::String(Some(s)) => s,
-      _ => panic!("Not a string literal.")
-    }
-  }
-
-  pub fn as_string(&self) -> &Option<String> {
-    match self {
-      Self::String(s) => s,
-      other => panic!("Not a string type: {:?}", other)
-    }
-  }
+  pub fn into_custom(self) -> C { pick!(self, Self::Custom(c) => c, "Not a custom type: {:?}") }
+  pub fn into_depends(self) -> DependsOn<C> { pick!(self, Self::DependsOn(d) => d, "Not a dependent type: {:?}") }
+  pub fn into_object(self) -> Arc<Object<C>> { pick!(self, Self::Object(o) => o, "Not an object: {:?}") }
 }
 
 pub trait Runtime: Send + 'static {}

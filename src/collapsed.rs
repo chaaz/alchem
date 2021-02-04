@@ -104,19 +104,8 @@ impl<C: CustomType + 'static> Declared<C> {
     }
   }
 
-  pub fn as_str(&self) -> Option<&str> {
-    match self {
-      Self::String(s) => Some(s),
-      _ => None
-    }
-  }
-
-  pub fn as_function(&self) -> Arc<Function<C>> {
-    match self {
-      Self::Function(v) => v.clone(),
-      _ => panic!("Not a function: {:?}", self)
-    }
-  }
+  pub fn as_str(&self) -> Option<&str> { pick_opt!(self, Self::String(s) => s) }
+  pub fn as_function(&self) -> Arc<Function<C>> { pick!(self, Self::Function(v) => v.clone(), "Not a function: {:?}") }
 
   pub fn to_value(&self) -> Value<C> {
     match self {

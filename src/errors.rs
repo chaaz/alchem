@@ -41,3 +41,18 @@ macro_rules! bad {
 macro_rules! bail {
   ($($arg:tt)*) => (return ($crate::err!($($arg)*)))
 }
+
+// #[macro_export]
+// macro_rules! pick {
+//   ($s:expr, $( $p:pat => $e:expr ),*) => ( match $s { $( $p => $e ),* } );
+// }
+
+#[macro_export]
+macro_rules! pick {
+  ($s:expr, $p:pat => $e:expr, $er:expr) => ( match $s { $p => $e, o => panic!($er, o) } );
+}
+
+#[macro_export]
+macro_rules! pick_opt {
+  ($s:expr, $p:pat => $e:expr) => ( match $s { $p => std::option::Option::Some($e), _ => std::option::Option::None } );
+}

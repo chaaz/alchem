@@ -2,22 +2,22 @@
 
 mod util;
 
-use util::expect;
+use util::{expect_i32, expect_f64, expect_str};
 
 #[tokio::test]
-async fn local_int() { expect("a=1;=a", 1).await; }
+async fn local_int() { expect_i32("a=1;=a", 1).await; }
 
 #[tokio::test]
-async fn local_float() { expect("a=1.1;=a", 1.1).await; }
+async fn local_float() { expect_f64("a=1.1;=a", 1.1).await; }
 
 #[tokio::test]
-async fn local_string() { expect(r#"a="hello";=a"#, "hello").await; }
+async fn local_string() { expect_str(r#"a="hello";=a"#, "hello").await; }
 
 #[tokio::test]
-async fn local_nest() { expect("=if true {a=1;=a} else {=2}", 1).await; }
+async fn local_nest() { expect_i32("=if true {a=1;=a} else {=2}", 1).await; }
 
 #[tokio::test]
-async fn local_nest_search() { expect("a=1;=if true {=a} else {=2}", 1).await; }
+async fn local_nest_search() { expect_i32("a=1;=if true {=a} else {=2}", 1).await; }
 
 #[tokio::test]
-async fn deep_rotate() { expect("a=1;b=2;c=3;d=4;=d", 4).await; }
+async fn deep_rotate() { expect_i32("a=1;b=2;c=3;d=4;=d", 4).await; }
