@@ -1,6 +1,6 @@
 //! The alchem compiler.
 
-use crate::collapsed::collapse_function;
+use crate::collapsed::{collapse_function, Function as CollapsedFunction, Globals as CollapsedGlobals};
 use crate::commas::{handle_commas, HandleCommas};
 use crate::common::{Closure, Extraction, ExtractionPart, Function, Globals, KnownUpvals, MorphIndex, Opcode, Upval};
 use crate::errors::Error;
@@ -28,15 +28,15 @@ pub async fn compile<C: CustomType + 'static>(source: &str, globals: &Globals<C>
 
 pub fn collapse_script<C: CustomType + 'static>(
   scope: ScopeZero<C>, stype: Type<C>, globals: Globals<C>
-) -> (crate::collapsed::Function<C>, usize, HashMap<String, crate::collapsed::Declared<C>>) {
+) -> (CollapsedFunction<C>, usize, CollapsedGlobals<C>) {
   let chunk = scope.into_chunk();
   let function = Function::script(chunk, stype);
   let globals = globals.into_iter().map(|(k, v)| (k, collapse_function(v))).collect();
-  (crate::collapsed::Function::from_common(Arc::new(function)), 0, globals)
+  (CollapsedFunction::from_common(Arc::new(function)), 0, globals)
 }
 
 pub fn script_to_closure<C: CustomType + 'static>(script: Arc<Function<C>>) -> Arc<Closure<C>> {
-  let function = Arc::new(crate::collapsed::Function::from_common(script));
+  let function = Arc::new(CollapsedFunction::from_common(script));
   Arc::new(Closure::new(function, Vec::new()))
 }
 

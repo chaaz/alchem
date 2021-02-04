@@ -7,8 +7,11 @@ use crate::common::{Closure, Instr, MorphStatus, Native, NativeInfo};
 use crate::compiler::script_to_closure;
 use crate::types::{Array, CustomType, Object, Type};
 use crate::value::Value;
+use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
+
+pub type Globals<C> = HashMap<String, Declared<C>>;
 
 #[derive(Clone, Debug)]
 pub struct CollapsedArray<C: CustomType> {
@@ -65,6 +68,7 @@ impl<C: CustomType + 'static> CollapsedType<C> {
   }
 }
 
+#[derive(Clone)]
 pub enum Declared<C: CustomType> {
   Float(f64),
   Int(i32),

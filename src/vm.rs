@@ -21,15 +21,14 @@ type Stack<C> = Inline<Value<C>>;
 pub struct Vm<C: CustomType> {
   call_stack: CallStack<C>,
   stack: Stack<C>,
-  open_upvals: OpenUpvalues<C>
-}
-
-impl<C: CustomType + 'static> Default for Vm<C> {
-  fn default() -> Vm<C> { Vm::new() }
+  open_upvals: OpenUpvalues<C>,
+  runtime: C::Runtime
 }
 
 impl<C: CustomType + 'static> Vm<C> {
-  pub fn new() -> Vm<C> { Vm { call_stack: Vec::new(), stack: Stack::new(), open_upvals: OpenUpvalues::new() } }
+  pub fn new(runtime: C::Runtime) -> Vm<C> {
+    Vm { call_stack: Vec::new(), stack: Stack::new(), open_upvals: OpenUpvalues::new(), runtime }
+  }
 
   pub async fn interpret(self, source: &str, globals: crate::common::Globals<C>) -> Value<C> {
     debug_assert_eq!(self.stack.len(), 0);
@@ -43,7 +42,13 @@ impl<C: CustomType + 'static> Vm<C> {
     let function = Arc::new(function);
     let closure = Arc::new(Closure::new(function, Vec::new()));
 
-    let mut ftr = Runner { call_stack: self.call_stack, stack: self.stack, globals, open_upvals: self.open_upvals };
+    let mut ftr = Runner {
+      call_stack: self.call_stack,
+      stack: self.stack,
+      globals,
+      open_upvals: self.open_upvals,
+      runtime: self.runtime
+    };
 
     ftr.run_closure(closure, inst_ind, Vec::new()).await
   }
@@ -53,10 +58,15 @@ pub struct Runner<C: CustomType> {
   call_stack: CallStack<C>,
   stack: Stack<C>,
   globals: Globals<C>,
-  open_upvals: OpenUpvalues<C>
+  open_upvals: OpenUpvalues<C>,
+  runtime: C::Runtime
 }
 
 impl<C: CustomType + 'static> Runner<C> {
+  pub fn fresh(globals: Globals<C>, runtime: C::Runtime) -> Runner<C> {
+    Runner { call_stack: Vec::new(), stack: Stack::new(), globals, open_upvals: OpenUpvalues::new(), runtime }
+  }
+
   pub async fn run_value(&mut self, value: Value<C>, inst_ind: usize, args: Vec<Value<C>>) -> Value<C> {
     match value {
       Value::Closure(closure) => self.run_closure(closure, inst_ind, args).await,
@@ -106,7 +116,7 @@ impl<C: CustomType + 'static> Runner<C> {
   }
 
   fn try_run(&mut self) -> Stopped<C> {
-    let Runner { call_stack, stack, globals, open_upvals } = self;
+    let Runner { call_stack, stack, globals, open_upvals, .. } = self;
 
     #[cfg(feature = "verbose")]
     debug_start();
@@ -160,6 +170,8 @@ impl<C: CustomType + 'static> Runner<C> {
   //     println!("  at {} in {}: {:?}", instr.loc(), closure.smart_name(), instr);
   //   }
   // }
+
+  pub fn runtime_mut(&mut self) -> &mut C::Runtime { &mut self.runtime }
 }
 
 pub struct NativeRun<C: CustomType> {

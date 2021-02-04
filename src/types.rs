@@ -42,6 +42,7 @@ impl<C: CustomType + 'static> Object<C> {
   pub fn index_of(&self, key: &str) -> Option<usize> { self.index.iter().position(|k| k == key) }
   pub fn get(&self, key: &str) -> &Type<C> { self.types.get(key).unwrap() }
   pub fn len(&self) -> usize { self.index.len() }
+  pub fn is_empty(&self) -> bool { self.index.is_empty() }
   pub fn is_single_use(&self) -> bool { self.types.values().any(|v| v.is_single_use()) }
 
   pub fn add(&mut self, key: String, t: Type<C>) {
@@ -99,6 +100,10 @@ where
     Type::DependsOn(DependsOn::unit(MorphIndex::weak(func, inst_ind)))
   }
 
+  pub fn is_object(&self) -> bool { matches!(self, Type::Object(..)) }
+  pub fn is_array(&self) -> bool { matches!(self, Type::Array(..)) }
+  pub fn is_function(&self) -> bool { matches!(self, Type::FnSync(..)) }
+
   pub fn is_single_use(&self) -> bool {
     match self {
       Self::Object(o) => o.is_single_use(),
@@ -152,7 +157,7 @@ where
   pub fn as_function(&self) -> Weak<Function<C>> {
     match self {
       Self::FnSync(f) => f.clone(),
-      _ => panic!("Type is not a function.")
+      other => panic!("Type {:?} is not a function.", other)
     }
   }
 
@@ -196,13 +201,16 @@ where
   }
 }
 
-pub trait CustomValue: Send + PartialEq + Eq + fmt::Debug {
-  fn shift(&mut self) -> Self;
+pub trait Runtime: Send + 'static {}
+
+pub trait CustomValue: Sized + Send + fmt::Debug {
+  fn shift(&mut self) -> Option<Self>;
 }
 
 pub trait CustomType: PartialEq + Eq + IsSingle + fmt::Debug + Clone + Send + Sync + 'static {
   type Collapsed: Clone + Send + Sync + fmt::Debug;
   type Value: CustomValue;
+  type Runtime: Runtime;
   fn collapse(&self) -> Self::Collapsed;
 }
 
@@ -214,14 +222,10 @@ pub trait IsSingle {
 pub enum NoValue {}
 
 impl CustomValue for NoValue {
-  fn shift(&mut self) -> Self { panic!("Can't shift non-existent NoValue") }
+  fn shift(&mut self) -> Option<Self> { panic!("Can't shift non-existent NoValue") }
 }
 
-impl PartialEq for NoValue {
-  fn eq(&self, _other: &Self) -> bool { true }
-}
-
-impl Eq for NoValue {}
+impl Runtime for () {}
 
 #[derive(Clone, Debug)]
 pub enum NoCustom {}
@@ -229,6 +233,8 @@ pub enum NoCustom {}
 impl CustomType for NoCustom {
   type Collapsed = ();
   type Value = NoValue;
+  type Runtime = ();
+
   fn collapse(&self) {}
 }
 

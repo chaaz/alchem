@@ -1,7 +1,8 @@
 //! The command-line options for the executable.
 
+use alchem::collapsed::CollapsedInfo;
 use alchem::errors::Result;
-use alchem::value::{add_native, CollapsedInfo, Globals, MorphStatus, NativeInfo, NoCustom, Type, Value};
+use alchem::value::{add_native, Globals, MorphStatus, NativeInfo, NoCustom, Type, Value};
 use alchem::vm::{Runner, Vm};
 use alchem::{native_fn, native_tfn};
 use clap::{crate_version, App, AppSettings, Arg, ArgMatches};
@@ -37,7 +38,7 @@ async fn parse_matches(m: ArgMatches<'_>) -> Result<()> {
 
 async fn run_file(input: &str) -> Result<()> {
   let val = std::fs::read_to_string(input)?;
-  let vm = Vm::new();
+  let vm = Vm::new(());
 
   let mut globals = new_globals();
   add_native(&mut globals, "print", 1, ntv_print, ntvt_print);

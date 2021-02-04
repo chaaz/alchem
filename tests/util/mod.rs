@@ -11,13 +11,13 @@ type Map = serde_json::Map<String, Json>;
 
 #[allow(dead_code)]
 pub async fn expect<V: Into<Value<NoCustom>>>(script: &str, expected: V) {
-  let vm = Vm::new();
+  let vm = Vm::new(());
   assert_eq!(vm.interpret(script, new_globals()).await, expected.into());
 }
 
 #[allow(dead_code)]
 pub async fn expectn<V: Into<Value<NoCustom>>>(script: &str, expected: V) {
-  let vm = Vm::new();
+  let vm = Vm::new(());
 
   let mut globals = new_globals();
   natives::add_all_natives(&mut globals);
@@ -27,7 +27,7 @@ pub async fn expectn<V: Into<Value<NoCustom>>>(script: &str, expected: V) {
 
 #[allow(dead_code)]
 pub async fn expectj<V: Into<Value<NoCustom>>>(script: &str, expected: V) {
-  let vm = Vm::new();
+  let vm = Vm::new(());
 
   let mut globals = new_globals();
   jsons::add_all_natives(&mut globals);

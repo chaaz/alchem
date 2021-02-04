@@ -1,7 +1,8 @@
 //! Some JSON-based native functions for alchem testing.
 
+use alchem::collapsed::CollapsedInfo;
 use alchem::collapsed::CollapsedType;
-use alchem::value::{add_native, CollapsedInfo, Globals, MorphStatus, NativeInfo, NoCustom, Type, Value};
+use alchem::value::{add_native, Globals, MorphStatus, NativeInfo, NoCustom, Type, Value};
 use alchem::vm::Runner;
 use alchem::{native_fn, native_tfn};
 use macro_rules_attribute::macro_rules_attribute;

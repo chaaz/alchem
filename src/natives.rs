@@ -1,7 +1,7 @@
 //! Some natives to add to the standard Alchem compile/runtime.
 
-use crate::value::{add_native, match_native, CollapsedInfo, CustomType, Function, Globals, MorphStatus, NativeInfo,
-                   Type, Value};
+use crate::collapsed::CollapsedInfo;
+use crate::value::{add_native, match_native, CustomType, Function, Globals, MorphStatus, NativeInfo, Type, Value};
 use crate::vm::{compile, Runner};
 use crate::{native_fn, native_tfn};
 use macro_rules_attribute::macro_rules_attribute;
@@ -24,7 +24,6 @@ fn ntvm_eval<C: CustomType + 'static>(a1: &[Type<C>], a2: &[Type<C>]) -> bool {
 #[macro_rules_attribute(native_tfn!)]
 async fn ntvt_eval<C: CustomType + 'static>(args: Vec<Type<C>>, globals: &Globals<C>) -> MorphStatus<C> {
   let code = args[0].as_string().as_deref().expect("Eval argument must be a literal string.");
-
   let (scope, stype) = compile(code, &globals).await;
   let chunk = scope.into_chunk();
   let function = Function::script(chunk, stype.clone());

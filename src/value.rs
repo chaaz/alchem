@@ -3,14 +3,13 @@
 use crate::collapsed::FuncNative;
 use crate::common::{Native, TypeMatch, TypeNative};
 use serde_json::{Number, Value as Json};
-use std::cmp::PartialEq;
 use std::fmt;
+use std::mem;
 use std::sync::Arc;
 
-pub use crate::collapsed::CollapsedInfo;
 pub use crate::common::{Closure, Function, Globals, MorphStatus, NativeInfo};
 pub use crate::natives::add_std;
-pub use crate::types::{CustomType, CustomValue, NoCustom, NoValue, Type};
+pub use crate::types::{CustomType, CustomValue, IsSingle, NoCustom, NoValue, Object, Runtime, Type};
 
 pub fn add_native<C>(globals: &mut Globals<C>, name: impl ToString, arity: u8, native: Native<C>, typen: TypeNative<C>)
 where
@@ -41,24 +40,6 @@ pub enum Value<C: CustomType> {
   Json(Json),
   Custom(C::Value),
   Void
-}
-
-impl<C: CustomType> PartialEq for Value<C> {
-  fn eq(&self, other: &Value<C>) -> bool {
-    match (self, other) {
-      (Self::Float(v1), Self::Float(v2)) => v1 == v2,
-      (Self::Int(v1), Self::Int(v2)) => v1 == v2,
-      (Self::Bool(v1), Self::Bool(v2)) => v1 == v2,
-      (Self::String(v1), Self::String(v2)) => v1 == v2,
-      (Self::Closure(v1), Self::Closure(v2)) => Arc::ptr_eq(v1, v2),
-      (Self::Native(v1), Self::Native(v2)) => Arc::ptr_eq(v1, v2),
-      (Self::Array(v1), Self::Array(v2)) => v1 == v2,
-      (Self::Json(a), Self::Json(b)) => a == b,
-      (Self::Custom(a), Self::Custom(b)) => a == b,
-      (Self::Void, Self::Void) => true,
-      _ => false
-    }
-  }
 }
 
 impl<C: CustomType> fmt::Debug for Value<C> {
@@ -116,6 +97,34 @@ impl From<NoValue> for Value<NoCustom> {
 
 impl<C: CustomType> Value<C> {
   pub fn cloneable(&self) -> bool { true }
+
+  pub fn as_float(&self) -> f64 {
+    match self {
+      Self::Float(v) => *v,
+      _ => panic!("Not a float: {:?}", self)
+    }
+  }
+
+  pub fn as_str(&self) -> &str {
+    match self {
+      Self::String(v) => v,
+      _ => panic!("Not a string: {:?}", self)
+    }
+  }
+
+  pub fn into_native(self) -> Arc<FuncNative<C>> {
+    match self {
+      Self::Native(v) => v,
+      _ => panic!("Not a native function: {:?}", self)
+    }
+  }
+
+  pub fn into_string(self) -> String {
+    match self {
+      Self::String(v) => v.to_string(),
+      _ => panic!("Not a string: {:?}", self)
+    }
+  }
 
   pub fn as_custom(&self) -> &C::Value {
     match self {
@@ -178,7 +187,10 @@ impl<C: CustomType> Value<C> {
       Self::Native(v) => Self::Native(v.clone()),
       Self::Array(v) => Self::Array(v.iter_mut().map(|v| v.shift()).collect()),
       Self::Json(v) => Self::Json(v.clone()),
-      Self::Custom(v) => Self::Custom(v.shift()),
+      Self::Custom(v) => match v.shift() {
+        Some(v) => Self::Custom(v),
+        None => Self::Custom(mem::replace(self, Self::Void).into_custom())
+      },
       Self::Void => panic!("Cannot access an evaculated value.")
     }
   }
@@ -593,6 +605,6 @@ mod test {
 
   #[test]
   fn value_clone() {
-    assert_eq!(Value::<NoCustom>::Float(1.0).shift(), Value::Float(1.0));
+    assert_eq!(Value::<NoCustom>::Float(1.0).shift().as_float(), 1.0);
   }
 }
