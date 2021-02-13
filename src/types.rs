@@ -107,6 +107,8 @@ where
   pub fn is_known(&self) -> bool { !matches!(self, Self::DependsOn(_) | Self::Unset) }
   pub fn is_string(&self) -> bool { matches!(self, Self::String(_)) }
   pub fn is_string_literal(&self) -> bool { matches!(self, Self::String(Some(_))) }
+  pub fn is_number(&self) -> bool { matches!(self, Self::Number) }
+  pub fn is_bool(&self) -> bool { matches!(self, Self::Bool) }
 
   pub fn is_single_use(&self) -> bool {
     match self {
@@ -137,7 +139,7 @@ where
   pub fn into_object(self) -> Arc<Object<C>> { pick!(self, Self::Object(o) => o, "Not an object: {:?}") }
 }
 
-pub trait Runtime: Send + 'static {}
+pub trait Runtime: Clone + Send + 'static {}
 
 pub trait CustomValue: Sized + Send + fmt::Debug {
   fn shift(&mut self) -> Option<Self>;

@@ -529,6 +529,11 @@ where
 
   async fn dot(&mut self, ltype: Type<C>) -> Type<C> {
     self.advance();
+
+    if self.scope.len() > 1 {
+      return Type::Unset;
+    }
+
     match self.previous.token_type() {
       TokenType::Identifier(s) => {
         let name = s.to_string();
@@ -565,6 +570,12 @@ where
 
   async fn indot(&mut self, intype: Type<C>) -> Type<C> {
     self.advance();
+
+    if self.scope.len() > 1 {
+      self.consume(TokenTypeDiscr::CloseSquare);
+      return Type::Unset;
+    }
+
     match self.previous.token_type() {
       TokenType::IntLit(s) => {
         let ind = s.parse().unwrap();
@@ -613,7 +624,12 @@ where
     }
 
     match ttd {
-      TokenTypeDiscr::DoubleEq
+      TokenTypeDiscr::Plus
+      | TokenTypeDiscr::Minus
+      | TokenTypeDiscr::Star
+      | TokenTypeDiscr::Slash
+      | TokenTypeDiscr::Percent
+      | TokenTypeDiscr::DoubleEq
       | TokenTypeDiscr::NotEq
       | TokenTypeDiscr::Gt
       | TokenTypeDiscr::Lt
@@ -622,15 +638,59 @@ where
         if ltype.is_depends() && rtype.is_depends() {
           rtype = rtype.and_depends(ltype.clone());
         } else if ltype.is_string_literal() && rtype.is_string_literal() {
-          rtype = Type::String(Some(format!("{}{}", ltype.as_string_literal(), rtype.as_string_literal())));
+          match ttd {
+            TokenTypeDiscr::Plus
+            | TokenTypeDiscr::Minus
+            | TokenTypeDiscr::Star
+            | TokenTypeDiscr::Slash
+            | TokenTypeDiscr::Percent => {
+              rtype = Type::String(Some(format!("{}{}", ltype.as_string_literal(), rtype.as_string_literal())));
+            }
+            _ => {
+              rtype = Type::Bool;
+            }
+          }
         } else if ltype.is_string() && rtype.is_string_literal() {
-          rtype = Type::String(None);
+          match ttd {
+            TokenTypeDiscr::Plus
+            | TokenTypeDiscr::Minus
+            | TokenTypeDiscr::Star
+            | TokenTypeDiscr::Slash
+            | TokenTypeDiscr::Percent => {
+              rtype = Type::String(None);
+            }
+            _ => {
+              rtype = Type::Bool;
+            }
+          }
         } else if ltype.is_depends() {
           rtype = ltype.clone();
         } else if !rtype.is_depends() && ltype.is_known() && rtype.is_known() && !ltype.is_json() && !rtype.is_json() {
-          rtype = Type::Bool;
+          match ttd {
+            TokenTypeDiscr::Plus
+            | TokenTypeDiscr::Minus
+            | TokenTypeDiscr::Star
+            | TokenTypeDiscr::Slash
+            | TokenTypeDiscr::Percent => {
+              rtype = ltype.clone();
+            }
+            _ => {
+              rtype = Type::Bool;
+            }
+          }
         } else if !rtype.is_depends() && ltype.is_json() {
-          rtype = Type::Json;
+          match ttd {
+            TokenTypeDiscr::Plus
+            | TokenTypeDiscr::Minus
+            | TokenTypeDiscr::Star
+            | TokenTypeDiscr::Slash
+            | TokenTypeDiscr::Percent => {
+              rtype = Type::Json;
+            }
+            _ => {
+              rtype = Type::Bool;
+            }
+          }
         }
       }
       _ => ()

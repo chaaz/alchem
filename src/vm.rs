@@ -63,8 +63,27 @@ pub struct Runner<C: CustomType> {
 }
 
 impl<C: CustomType + 'static> Runner<C> {
+  pub fn capture(&mut self) -> Runner<C> {
+    self.open_upvals.close_gte(0, &mut self.stack);
+    Runner {
+      call_stack: Vec::new(),
+      stack: Stack::new(),
+      globals: self.globals.clone(),
+      open_upvals: OpenUpvalues::new(),
+      runtime: self.runtime.clone()
+    }
+  }
+
   pub fn fresh(globals: Globals<C>, runtime: C::Runtime) -> Runner<C> {
     Runner { call_stack: Vec::new(), stack: Stack::new(), globals, open_upvals: OpenUpvalues::new(), runtime }
+  }
+
+  pub async fn into_run_value(mut self, value: Value<C>, inst_ind: usize, args: Vec<Value<C>>) -> Value<C> {
+    match value {
+      Value::Closure(closure) => self.run_closure(closure, inst_ind, args).await,
+      Value::Native(func_native) => self.run_native(func_native, inst_ind, args).await,
+      other => panic!("Value is not runnable: {:?}", other)
+    }
   }
 
   pub async fn run_value(&mut self, value: Value<C>, inst_ind: usize, args: Vec<Value<C>>) -> Value<C> {
@@ -266,8 +285,12 @@ fn handle_op<C: CustomType + 'static>(
       for i in 0 .. *len {
         parts.push(stack[stack_len - (len - i)].shift());
       }
-      stack[stack_len - len] = Value::Array(parts);
-      stack.truncate(stack_len - (len - 1));
+      if *len > 0 {
+        stack[stack_len - len] = Value::Array(parts);
+        stack.truncate(stack_len - (len - 1));
+      } else {
+        stack.push(Value::Array(parts));
+      }
     }
     Opcode::Object(inds) => {
       let stack_len = stack.len();
@@ -279,9 +302,12 @@ fn handle_op<C: CustomType + 'static>(
       for (i, ind) in inds.iter().enumerate() {
         parts[*ind] = stack[stack_len - (inds_len - i)].shift();
       }
-
-      stack[stack_len - inds_len] = Value::Array(parts);
-      stack.truncate(stack_len - (inds_len - 1));
+      if inds_len > 0 {
+        stack[stack_len - inds_len] = Value::Array(parts);
+        stack.truncate(stack_len - (inds_len - 1));
+      } else {
+        stack.push(Value::Array(parts));
+      }
     }
     Opcode::GetIndex(ind) => {
       let stack_len = stack.len();

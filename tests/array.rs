@@ -8,6 +8,9 @@ use util::{expect_i32, expect_bool};
 async fn create_simple() { expect_i32("a=[1];=a.0", 1).await; }
 
 #[tokio::test]
+async fn create_empty() { expect_i32("a=[];=1", 1).await; }
+
+#[tokio::test]
 async fn create_multi() { expect_i32("a=[1,2,3];=a.2", 3).await; }
 
 #[tokio::test]

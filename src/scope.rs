@@ -266,18 +266,7 @@ impl<C: CustomType + 'static> ScopeStack<C> {
     }
   }
 
-  // fn locals_at(&self, scope_ind: usize) -> &Locals {
-  //   if scope_ind == 0 {
-  //     self.zero.locals()
-  //   } else if scope_ind == 1 {
-  //     self.one.as_ref().unwrap().locals()
-  //   } else {
-  //     self.later[scope_ind - 2].locals()
-  //   }
-  // }
-
   fn locals_mut(&mut self) -> &mut Locals<C> { self.locals_at_mut(self.len() - 1) }
-  // fn locals(&self) -> &Locals { self.locals_at(self.len() - 1) }
 }
 
 pub struct ScopeZero<C: CustomType> {
@@ -410,9 +399,9 @@ impl<C: CustomType + 'static> Locals<C> {
   }
 
   pub fn add_local(&mut self, local: Local<C>) {
-    if self.is_defined(local.name()) {
-      panic!("Already defined local variable \"{}\".", local.name());
-    }
+    // if self.is_defined(local.name()) {
+    //   panic!("Already defined local variable \"{}\".", local.name());
+    // }
 
     if self.locals.len() >= MAX_LOCALS {
       panic!("Too many locals: {}", self.locals.len());
@@ -421,12 +410,16 @@ impl<C: CustomType + 'static> Locals<C> {
     self.locals.push(local);
   }
 
-  fn is_defined(&self, name: &str) -> bool {
-    self.locals.iter().rev().take_while(|l| l.depth() >= self.scope_depth).any(|l| l.name() == name)
-  }
+  // fn is_defined(&self, name: &str) -> bool {
+  //   self.locals.iter().rev().take_while(|l| l.depth() >= self.scope_depth).any(|l| l.name() == name)
+  // }
 
   pub fn resolve_local(&mut self, name: &str) -> Option<(usize, Type<C>)> {
-    let i = self.locals.iter_mut().enumerate().rev().find(|(_, l)| l.name() == name);
+    let mut i = self.locals.iter_mut().enumerate().rev().find(|(_, l)| l.name() == name && l.is_initialized());
+    if i.is_none() {
+      i = self.locals.iter_mut().enumerate().rev().find(|(_, l)| l.name() == name);
+    }
+
     match i {
       None => None,
       Some((i, local)) => {
@@ -469,6 +462,7 @@ impl<C: CustomType> Local<C> {
   pub fn new(name: String) -> Local<C> {
     Local { name, depth: 0, is_captured: false, local_type: Type::Unset, used: 0 }
   }
+
   pub fn name(&self) -> &str { &self.name }
   pub fn depth(&self) -> u16 { self.depth }
   pub fn is_captured(&self) -> bool { self.is_captured }
