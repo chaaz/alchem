@@ -196,9 +196,13 @@ where
     }
   }
 
-  async fn block_content(&mut self) -> Type<C> {
+  async fn block_content(&mut self, restore: bool) -> Type<C> {
     self.begin_scope();
     let btype = self.body().await;
+    self.reserve_used();
+    if restore {
+      self.restore_used();
+    }
     self.end_scope();
     btype
   }
@@ -315,9 +319,9 @@ where
     }
   }
 
-  async fn block(&mut self) -> Type<C> {
+  async fn block(&mut self, restore: bool) -> Type<C> {
     self.consume(TokenTypeDiscr::OpenCurl);
-    let btype = self.block_content().await;
+    let btype = self.block_content(restore).await;
     self.consume(TokenTypeDiscr::CloseCurl);
     btype
   }
@@ -399,7 +403,7 @@ where
     assert!(!test_type.is_known() || test_type == Type::Bool);
     let false_jump = self.emit_jump(Opcode::initial_jump_if_false());
     self.emit_instr(Opcode::Pop);
-    let mut b1_type = self.block().await;
+    let mut b1_type = self.block(false).await;
     assert!(self.scope.len() > 1 || b1_type != Type::Unset);
     let done_jump = self.emit_jump(Opcode::initial_jump());
     self.patch_jump(false_jump);
@@ -413,7 +417,7 @@ where
       assert!(!in_test_type.is_known() || in_test_type == Type::Bool);
       let f2_jump = self.emit_jump(Opcode::initial_jump_if_false());
       self.emit_instr(Opcode::Pop);
-      let bx_type = self.block().await;
+      let bx_type = self.block(false).await;
       assert!(self.scope.len() > 1 || bx_type != Type::Unset);
       assert!(!b1_type.is_known() || !bx_type.is_known() || b1_type == bx_type);
       if self.scope.len() == 1 {
@@ -429,7 +433,7 @@ where
     }
 
     self.consume(TokenTypeDiscr::ElseWord);
-    let b2_type = self.block().await;
+    let b2_type = self.block(true).await;
     assert!(self.scope.len() > 1 || b2_type != Type::Unset);
     assert!(!b1_type.is_known() || !b2_type.is_known() || b1_type == b2_type);
     if self.scope.len() == 1 {
@@ -777,6 +781,8 @@ where
   fn pop_scope_zero(self) -> ScopeZero<C> { self.scope.pop_scope_zero() }
   fn pop_scope_one(&mut self) -> (ScopeOne<C>, Vec<Token>) { self.scope.pop_scope_one() }
   fn pop_scope_later(&mut self) -> ScopeLater<C> { self.scope.pop_scope_later() }
+  fn reserve_used(&mut self) { self.scope.reserve_used(); }
+  fn restore_used(&mut self) { self.scope.restore_used(); }
 }
 
 #[derive(Debug)]

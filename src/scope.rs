@@ -6,6 +6,7 @@ use crate::types::{CustomType, Type};
 use crate::value::Declared;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::cmp::max;
 
 const MAX_LOCALS: usize = 255;
 pub type Jump = usize;
@@ -194,6 +195,9 @@ impl<C: CustomType + 'static> ScopeStack<C> {
 
   pub fn pop_scope_zero(self) -> ScopeZero<C> { self.zero }
   pub fn add_local(&mut self, name: String) { self.locals_mut().add_local(Local::new(name)); }
+
+  pub fn reserve_used(&mut self) { self.locals_mut().reserve_used(); }
+  pub fn restore_used(&mut self) { self.locals_mut().restore_used(); }
 
   pub fn resolve_local_at(&mut self, scope_ind: usize, name: &str) -> Option<(usize, Type<C>)> {
     self.locals_at_mut(scope_ind).resolve_local(name)
@@ -425,7 +429,7 @@ impl<C: CustomType + 'static> Locals<C> {
       Some((i, local)) => {
         if local.is_initialized() {
           let ltype = local.local_type();
-          let used = local.incr_used();
+          let used = local.incr_used(self.scope_depth);
           if ltype.is_single_use() && used > 1 {
             panic!("Can't use variable \"{}\" more than once.", name);
           }
@@ -447,6 +451,18 @@ impl<C: CustomType + 'static> Locals<C> {
   pub fn mark_last_initialized(&mut self, utype: Type<C>) { self.mark_initialized(1, utype); }
 
   pub fn set_captured(&mut self, locals_ind: usize, captured: bool) { self.locals[locals_ind].set_captured(captured); }
+
+  pub fn reserve_used(&mut self) {
+    for local in &mut self.locals {
+      local.reserve_used(self.scope_depth);
+    }
+  }
+
+  pub fn restore_used(&mut self) {
+    for local in &mut self.locals {
+      local.restore_used(self.scope_depth);
+    }
+  }
 }
 
 #[derive(Debug)]
@@ -455,12 +471,13 @@ struct Local<C: CustomType> {
   depth: u16,
   is_captured: bool,
   local_type: Type<C>,
-  used: usize
+  used: Vec<u16>,
+  reserved: Option<Vec<u16>>,
 }
 
 impl<C: CustomType> Local<C> {
   pub fn new(name: String) -> Local<C> {
-    Local { name, depth: 0, is_captured: false, local_type: Type::Unset, used: 0 }
+    Local { name, depth: 0, is_captured: false, local_type: Type::Unset, used: Vec::new(), reserved: None }
   }
 
   pub fn name(&self) -> &str { &self.name }
@@ -469,9 +486,35 @@ impl<C: CustomType> Local<C> {
   pub fn set_captured(&mut self, cap: bool) { self.is_captured = cap }
   pub fn local_type(&self) -> Type<C> { self.local_type.clone() }
 
-  pub fn incr_used(&mut self) -> usize {
-    self.used += 1;
-    self.used
+  pub fn incr_used(&mut self, depth: u16) -> u16 {
+    let above = (depth - self.depth) as usize;
+    if self.used.len() <= above {
+      self.used.resize(above + 1, 0);
+    }
+    self.used[above] += 1;
+    self.used.iter().sum()
+  }
+
+  pub fn reserve_used(&mut self, depth: u16) {
+    let above = (depth - self.depth) as usize;
+    if self.used.len() > above {
+      if let Some(reserved) = &mut self.reserved {
+        reserved.resize(max(reserved.len(), self.used.len()), 0);
+        for (i, u) in self.used.drain(above ..).enumerate() {
+          reserved[above + i] = max(reserved[above + i], u);
+        }
+      } else {
+        self.reserved = Some(vec![0; above].into_iter().chain(self.used.drain(above ..)).collect());
+      }
+    }
+  }
+
+  pub fn restore_used(&mut self, depth: u16) {
+    let above = (depth - self.depth) as usize;
+    if let Some(reserved) = &mut self.reserved {
+      assert!(self.used.len() == above);
+      self.used.extend(reserved.drain(above ..));
+    }
   }
 
   pub fn is_initialized(&self) -> bool { self.depth > 0 }

@@ -9,6 +9,12 @@ use util::{expect_i32, expect_str};
 async fn single_succ() { expect_str(r#"a="a";b=a;=b"#, "a").await; }
 
 #[tokio::test]
+async fn if_else() { expect_str(r#"a="a";=if true {=a} else {=a}"#, "a").await; }
+
+#[tokio::test]
+async fn nest_if_else() { expect_str(r#"a="a";=if true {=if true {=a} else {=a}} else {=a}"#, "a").await; }
+
+#[tokio::test]
 async fn double_succ() { expect_i32("a=1;b=a;c=a;=c", 1).await; }
 
 #[tokio::test]

@@ -102,6 +102,7 @@ impl<C: CustomType> Value<C> {
   pub fn as_int(&self) -> i32 { pick!(self, Self::Int(v) => *v, "Not an int: {:?}") }
   pub fn as_float(&self) -> f64 { pick!(self, Self::Float(v) => *v, "Not a float: {:?}") }
   pub fn as_str(&self) -> &str { pick!(self, Self::String(v) => v, "Not a string: {:?}") }
+  pub fn as_array(&self) -> &[Value<C>] { pick!(self, Self::Array(v) => v, "Not an array: {:?}") }
   pub fn as_custom(&self) -> &C::Value { pick!(self, Self::Custom(v) => v, "Not an custom type: {:?}") }
   pub fn as_bool(&self) -> bool { pick!(self, Self::Bool(v) => *v, "Not a boolean: {:?}") }
   pub fn as_closure(&self) -> Arc<Closure<C>> { pick!(self, Self::Closure(v) => v.clone(), "Not a closure: {:?}") }
