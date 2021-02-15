@@ -431,7 +431,7 @@ impl<C: CustomType + 'static> Locals<C> {
           let ltype = local.local_type();
           let used = local.incr_used(self.scope_depth);
           if ltype.is_single_use() && used > 1 {
-            panic!("Can't use variable \"{}\" more than once.", name);
+            panic!("Can't use variable \"{}\" (type {:?}) more than once.", name, ltype);
           }
           Some((i, ltype))
         } else {

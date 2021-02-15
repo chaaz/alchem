@@ -191,6 +191,7 @@ impl<C: CustomType + 'static> Runner<C> {
   // }
 
   pub fn runtime_mut(&mut self) -> &mut C::Runtime { &mut self.runtime }
+  pub fn runtime(&mut self) -> &C::Runtime { &self.runtime }
 }
 
 pub struct NativeRun<C: CustomType> {
