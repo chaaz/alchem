@@ -115,7 +115,6 @@ where
       Self::Object(o) => o.is_single_use(),
       Self::Array(a) => a.is_single_use(),
       Self::FnSync(f) => f.upgrade().unwrap().is_single_use(),
-      Self::String(_) => true, // TODO: for testing only: see `tests/single.rs`
       Self::Custom(c) => c.is_single_use(),
       _ => false
     }

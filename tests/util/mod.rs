@@ -1,6 +1,7 @@
 //! Test utility.
 
 mod natives;
+pub mod singles;
 
 use alchem::value::{Globals, NoCustom};
 use alchem::vm::Vm;
