@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 pub use crate::common::{Closure, Function, Globals, MorphStatus, NativeInfo};
 pub use crate::natives::{add_std, convert_to_json};
-pub use crate::types::{CustomType, CustomValue, IsSingle, NoCustom, NoValue, Object, Runtime, Type};
+pub use crate::types::{CustomType, CustomValue, IsSingle, NoCustom, NoValue, Object, Runtime, Type, Array};
 
 pub fn add_native<C>(globals: &mut Globals<C>, name: impl ToString, arity: u8, native: Native<C>, typen: TypeNative<C>)
 where
@@ -114,6 +114,38 @@ impl<C: CustomType> Value<C> {
   pub fn into_native(self) -> Arc<FuncNative<C>> { pick!(self, Self::Native(v) => v, "Not a native function: {:?}") }
   pub fn into_string(self) -> String { pick!(self, Self::String(v) => v.to_string(), "Not a string: {:?}") }
   pub fn into_custom(self) -> C::Value { pick!(self, Self::Custom(v) => v, "Not an custom type: {:?}") }
+  pub fn into_array(self) -> Vec<Value<C>> { pick!(self, Self::Array(v) => v, "Not an array: {:?}") }
+
+  pub fn decustomize(self) -> Value<NoCustom> {
+    match self {
+      Self::Float(v) => Value::Float(v),
+      Self::Int(v) => Value::Int(v),
+      Self::Bool(v) => Value::Bool(v),
+      Self::String(v) => Value::String(v),
+      Self::Closure(_) => panic!("Can't decustomize functions"),
+      Self::Native(_) => panic!("Can't decustomize functions"),
+      Self::Array(v) => Value::Array(v.into_iter().map(|v| v.decustomize()).collect()),
+      Self::Json(v) => Value::Json(v),
+      Self::Custom(v) => panic!("Is custom: {:?}", v),
+      Self::Void => Value::Void
+    }
+  }
+
+  pub fn customize(v: Value<NoCustom>) -> Self {
+    match v {
+      Value::Float(v) => Self::Float(v),
+      Value::Int(v) => Self::Int(v),
+      Value::Bool(v) => Self::Bool(v),
+      Value::String(v) => Self::String(v),
+      Value::Closure(_) => panic!("Can't customize functions"),
+      Value::Native(_) => panic!("Can't customize functions"),
+      Value::Array(v) => Self::Array(v.into_iter().map(Self::customize).collect()),
+      Value::Json(v) => Self::Json(v),
+      Value::Custom(v) => panic!("Is custom somehow: {:?}", v),
+      Value::Void => Self::Void
+    }
+  }
+
 
   pub fn clone_function(&self) -> Value<C> {
     match self {

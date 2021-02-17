@@ -21,6 +21,7 @@ impl<C: CustomType + Send + 'static> Array<C> {
   pub fn types(&self) -> &[Type<C>] { &self.types }
   pub fn get(&self, ind: usize) -> &Type<C> { self.types.get(ind).unwrap() }
   pub fn len(&self) -> usize { self.types.len() }
+  pub fn is_empty(&self) -> bool { self.types.is_empty() }
   pub fn add(&mut self, t: Type<C>) { self.types.push(t); }
   pub fn is_single_use(&self) -> bool { self.types.iter().any(|v| v.is_single_use()) }
 }
@@ -62,6 +63,7 @@ where
   String(Option<String>),
   Object(Arc<Object<C>>),
   Array(Arc<Array<C>>),
+  Iter(Box<Type<C>>),
   FnSync(Weak<Function<C>>), // Weak, so that we can collapse functions later.
   Json,
   Custom(C),
@@ -78,6 +80,7 @@ impl<C: CustomType> PartialEq for Type<C> {
       (Self::FnSync(a), Self::FnSync(b)) => Weak::ptr_eq(a, b),
       (Self::Unset, Self::Unset) => true,
       (Self::Json, Self::Json) => true,
+      (Self::Iter(a), Self::Iter(b)) => a == b,
       (Self::Object(a), Self::Object(b)) => a == b,
       (Self::Array(a), Self::Array(b)) => a == b,
       (Self::Custom(a), Self::Custom(b)) => a == b,
@@ -102,6 +105,7 @@ where
   pub fn is_depends(&self) -> bool { matches!(self, Self::DependsOn(_)) }
   pub fn is_object(&self) -> bool { matches!(self, Type::Object(..)) }
   pub fn is_array(&self) -> bool { matches!(self, Type::Array(..)) }
+  pub fn is_iter(&self) -> bool { matches!(self, Type::Iter(..)) }
   pub fn is_function(&self) -> bool { matches!(self, Type::FnSync(..)) }
   pub fn is_json(&self) -> bool { matches!(self, Self::Json) }
   pub fn is_known(&self) -> bool { !matches!(self, Self::DependsOn(_) | Self::Unset) }
@@ -128,6 +132,7 @@ where
   pub fn as_object(&self) -> &Object<C> { pick!(self, Self::Object(o) => o, "Not an object: {:?}") }
   pub fn as_string_literal(&self) -> &str { pick!(self, Self::String(Some(s)) => s, "Not a string literal: {:?}") }
   pub fn as_string(&self) -> &Option<String> { pick!(self, Self::String(s) => s, "Not a string type: {:?}") }
+  pub fn as_iter(&self) -> &Type<C> { pick!(self, Self::Iter(s) => s, "Not an iter: {:?}") }
 
   pub fn as_function(&self) -> Weak<Function<C>> {
     pick!(self, Self::FnSync(f) => f.clone(), "Type {:?} is not a function.")
