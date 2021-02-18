@@ -113,6 +113,7 @@ where
   pub fn is_string_literal(&self) -> bool { matches!(self, Self::String(Some(_))) }
   pub fn is_number(&self) -> bool { matches!(self, Self::Number) }
   pub fn is_bool(&self) -> bool { matches!(self, Self::Bool) }
+  pub fn is_unset(&self) -> bool { matches!(self, Self::Unset) }
 
   pub fn is_single_use(&self) -> bool {
     match self {

@@ -43,6 +43,9 @@ async fn nested_square() { expect_i32("a=[3,2,[1,5]];=a[2][1]", 5).await; }
 async fn destructure() { expect_i32("[x]=[1];=x", 1).await; }
 
 #[tokio::test]
+async fn destr_in_fn() { expect_i32("f=fn(){[x]=[1];=x};=f()", 1).await; }
+
+#[tokio::test]
 async fn destr_assigned() { expect_i32("a=[1];[x]=a;=x", 1).await; }
 
 #[tokio::test]

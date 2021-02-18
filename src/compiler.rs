@@ -282,7 +282,12 @@ where
           .iter()
           .enumerate()
           .flat_map(|(i, d)| {
-            let sub_type = dtype.as_array().get(i).clone();
+            let sub_type = if dtype.is_unset() {
+              assert!(self.scope.len() > 1);
+              Type::Unset
+            } else {
+              dtype.as_array().get(i).clone()
+            };
             let (counted, ex) = self.extract(d, sub_type, at - total, extr.push(i));
             total += counted;
             ex.into_parts().into_iter()
@@ -297,7 +302,12 @@ where
           .flat_map(|key| {
             let d = m.get(key).unwrap();
             let i = dtype.as_object().index_of(key).unwrap();
-            let sub_type = dtype.as_object().get(key).clone();
+            let sub_type = if dtype.is_unset() {
+              assert!(self.scope.len() > 1);
+              Type::Unset
+            } else {
+              dtype.as_object().get(key).clone()
+            };
             let (counted, ex) = self.extract(d, sub_type, at - total, extr.push(i));
             total += counted;
             ex.into_parts().into_iter()
@@ -487,9 +497,12 @@ where
       assert!(args_len < 256);
       let args_len: u8 = args_len as u8;
 
-      // thesis: because of scope boundries, it is impossible to compile a function call in which the function
-      // does not exist; so we can safely upgrade the function pointer.
+      // hypothesis: because of scope boundries, it is impossible to compile a function call in which the
+      // function does not exist; so we can safely upgrade the function pointer.
       let function = function.upgrade().unwrap();
+      if args_len != function.arity() {
+        panic!("Cannot call arity {} with args {}.", function.arity(), args_len);
+      }
       let (inst_ind, ftype) = function.clone().find_or_build(args, self.globals).await;
 
       match ftype {

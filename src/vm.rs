@@ -4,7 +4,7 @@ use crate::collapsed::{Chunk, CollapsedInfo, Declared, FuncNative};
 use crate::common::{Closure, Instr, Native, ObjUpvalue, ObjUpvalues, Opcode};
 pub use crate::compiler::{collapse_script, compile, script_to_closure};
 use crate::inline::Inline;
-use crate::types::{CustomType, NoCustom};
+use crate::types::CustomType;
 use crate::value::Value;
 use std::collections::HashMap;
 use std::fmt;
@@ -63,8 +63,6 @@ pub struct Runner<C: CustomType> {
 }
 
 impl<C: CustomType + 'static> Runner<C> {
-  pub fn capture_decustomize(&mut self) -> Runner<NoCustom> { todo!() }
-
   pub fn capture(&mut self) -> Runner<C> {
     self.open_upvals.close_gte(0, &mut self.stack);
     Runner {
