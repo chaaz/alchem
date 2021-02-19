@@ -84,14 +84,14 @@ async fn ntvt_recall(args: Vec<Tp>, globals: &Gl) -> Status {
     info.add_call_index(inst_ind);
     MorphStatus::NativeCompleted(info, ftype)
   } else {
-    MorphStatus::Known(Type::<NoCustom>::depends(&func, inst_ind))
+    MorphStatus::Known(Type::<NoCustom>::depends(&func, inst_ind.index()))
   }
 }
 
 #[macro_rules_attribute(native_fn!)]
 async fn ntv_recall(vals: Vec<Val>, info: CoInfo, runner: &mut Run) -> Val {
   let f = vals[0].as_closure();
-  let inst_ind = info.call_indexes()[0];
+  let inst_ind = info.into_call_indexes().into_iter().next().unwrap();
   runner.run_closure(f, inst_ind, Vec::new()).await
 }
 

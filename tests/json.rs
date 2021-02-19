@@ -5,7 +5,7 @@
 mod util;
 
 use serde_json::Value as Json;
-use util::{expect_json_f64, expect_json_str, expect_json_bool, expect_map_json, expect_vec_json, expect_array_f64, n};
+use util::{expect_array_f64, expect_json_bool, expect_json_f64, expect_json_str, expect_map_json, expect_vec_json, n};
 
 type Map = serde_json::Map<String, serde_json::Value>;
 

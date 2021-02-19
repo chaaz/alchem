@@ -2,7 +2,7 @@
 
 mod util;
 
-use util::{expect_i32, expect_f64, expect_str};
+use util::{expect_f64, expect_i32, expect_str};
 
 #[tokio::test]
 async fn local_int() { expect_i32("a=1;=a", 1).await; }

@@ -4,9 +4,9 @@ use crate::common::{Chunk, Function, Instr, KnownUpvals, MorphIndex, Opcode, Upv
 use crate::scanner::Token;
 use crate::types::{CustomType, Type};
 use crate::value::Declared;
+use std::cmp::max;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::cmp::max;
 
 const MAX_LOCALS: usize = 255;
 pub type Jump = usize;
@@ -472,7 +472,7 @@ struct Local<C: CustomType> {
   is_captured: bool,
   local_type: Type<C>,
   used: Vec<u16>,
-  reserved: Option<Vec<u16>>,
+  reserved: Option<Vec<u16>>
 }
 
 impl<C: CustomType> Local<C> {

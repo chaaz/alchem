@@ -3,6 +3,7 @@
 use crate::collapsed::{collapse_function, Function as CollapsedFunction, Globals as CollapsedGlobals};
 use crate::commas::{handle_commas, HandleCommas};
 use crate::common::{Closure, Extraction, ExtractionPart, Function, Globals, KnownUpvals, MorphIndex, Opcode, Upval};
+use crate::either::IterEither3 as E3;
 use crate::errors::Error;
 use crate::scanner::{Scanner, Token, TokenType, TokenTypeDiscr};
 use crate::scope::{Jump, ScopeLater, ScopeOne, ScopeStack, ScopeZero};
@@ -10,6 +11,7 @@ use crate::types::{CustomType, DependsOn, Type};
 use crate::value::Declared;
 use futures::future::Future;
 use std::collections::HashMap;
+use std::iter::once;
 use std::marker::PhantomData;
 use std::pin::Pin;
 use std::str::FromStr;
@@ -77,7 +79,7 @@ where
   }
 
   pub fn replay(
-    pnames: Vec<String>, args: Vec<Type<C>>, code: IntoIter<Token>, known_upvals: KnownUpvals<C>,
+    pnames: Vec<Destructure>, args: Vec<Type<C>>, code: IntoIter<Token>, known_upvals: KnownUpvals<C>,
     globals: &'g Globals<C>
   ) -> Compiler<'g, C> {
     let mut compiler = Compiler {
@@ -95,6 +97,7 @@ where
     compiler.advance();
     compiler.begin_scope();
 
+    let pnames: Vec<_> = pnames.iter().flat_map(|d| d.idents()).map(|s| s.to_string()).collect();
     assert_eq!(pnames.len(), args.len());
     for (p, a) in pnames.into_iter().zip(args.into_iter()) {
       compiler.declare_variable(p);
@@ -222,7 +225,7 @@ where
         let vtype = self.expression().await;
         self.consume(TokenTypeDiscr::Semi);
         let idents_len = destruct.idents_len();
-        let (c, extraction) = self.extract(&destruct, vtype, idents_len, ExtractionPart::empty());
+        let (c, extraction) = self.extract(&destruct, vtype, idents_len, ExtractionPart::empty(), true);
         assert_eq!(c, idents_len);
         assert_eq!(extraction.idents_len(), idents_len);
         self.emit_instr(Opcode::Extract(extraction))
@@ -268,12 +271,14 @@ where
     })
   }
 
-  fn extract(
-    &mut self, destruct: &Destructure, dtype: Type<C>, at: usize, extr: ExtractionPart
+  pub fn extract(
+    &mut self, destruct: &Destructure, dtype: Type<C>, at: usize, extr: ExtractionPart, mark: bool
   ) -> (usize, Extraction) {
     match destruct {
       Destructure::Ident(_) => {
-        self.mark_initialized(at, dtype);
+        if mark {
+          self.mark_initialized(at, dtype);
+        }
         (1, Extraction::single(extr))
       }
       Destructure::Array(v) => {
@@ -288,7 +293,7 @@ where
             } else {
               dtype.as_array().get(i).clone()
             };
-            let (counted, ex) = self.extract(d, sub_type, at - total, extr.push(i));
+            let (counted, ex) = self.extract(d, sub_type, at - total, extr.push(i), mark);
             total += counted;
             ex.into_parts().into_iter()
           })
@@ -301,14 +306,14 @@ where
           .iter()
           .flat_map(|key| {
             let d = m.get(key).unwrap();
-            let i = dtype.as_object().index_of(key).unwrap();
-            let sub_type = if dtype.is_unset() {
+            let (i, sub_type) = if dtype.is_unset() {
               assert!(self.scope.len() > 1);
-              Type::Unset
+              (0, Type::Unset)
             } else {
-              dtype.as_object().get(key).clone()
+              let i = dtype.as_object().index_of(key).unwrap();
+              (i, dtype.as_object().get(key).clone())
             };
-            let (counted, ex) = self.extract(d, sub_type, at - total, extr.push(i));
+            let (counted, ex) = self.extract(d, sub_type, at - total, extr.push(i), mark);
             total += counted;
             ex.into_parts().into_iter()
           })
@@ -489,21 +494,21 @@ where
   }
 
   async fn call(&mut self, intype: Type<C>) -> Type<C> {
-    let args = self.argument_list().await;
-
-    if self.scope.len() == 1 {
-      let function = intype.as_function();
-      let args_len = args.len();
-      assert!(args_len < 256);
-      let args_len: u8 = args_len as u8;
-
+    if self.scope.len() > 1 {
+      let (..) = self.argument_list(None).await;
+      Type::Unset
+    } else {
       // hypothesis: because of scope boundries, it is impossible to compile a function call in which the
       // function does not exist; so we can safely upgrade the function pointer.
+      let function = intype.as_function();
       let function = function.upgrade().unwrap();
-      if args_len != function.arity() {
-        panic!("Cannot call arity {} with args {}.", function.arity(), args_len);
-      }
-      let (inst_ind, ftype) = function.clone().find_or_build(args, self.globals).await;
+
+      let destrs = function.param_names().map(|v| v.to_vec());
+      let (arity, args) = self.argument_list(destrs.clone()).await;
+      assert_eq!(arity, function.arity(), "Can't call arity {} with {} args.", function.arity(), arity);
+      let args_len = args.len() as u8;
+
+      let (inst_ind, ftype) = function.clone().find_or_build_ext(args, self.globals).await;
 
       match ftype {
         Some(ftype) => {
@@ -516,14 +521,14 @@ where
           Type::DependsOn(DependsOn::unit(index))
         }
       }
-    } else {
-      Type::Unset
     }
   }
 
   #[allow(clippy::let_and_return)]
-  async fn argument_list(&mut self) -> Vec<Type<C>> {
-    handle_commas(self, TokenTypeDiscr::CloseParen, 255, "argument", HandleCommas::Args).await.into_args()
+  async fn argument_list(&mut self, dest: Option<Vec<Destructure>>) -> (u8, Vec<Type<C>>) {
+    let (a, _, t) =
+      handle_commas(self, TokenTypeDiscr::CloseParen, 255, "argument", HandleCommas::Args(dest)).await.into_args();
+    (a, t)
   }
 
   async fn unary(&mut self) -> Type<C> {
@@ -778,7 +783,7 @@ where
   // Defer to scope
 
   fn add_constant(&mut self, v: Declared<C>) -> usize { self.scope.add_constant(v) }
-  fn emit_instr(&mut self, code: Opcode) { self.scope.emit_instr(code); }
+  pub fn emit_instr(&mut self, code: Opcode) { self.scope.emit_instr(code); }
   fn emit_value(&mut self, v: Declared<C>, vtype: Type<C>) -> Type<C> { self.scope.emit_value(v, vtype) }
   fn emit_closure(&mut self, u: Vec<Upval>, f: Function<C>) -> Arc<Function<C>> { self.scope.emit_closure(u, f) }
   fn emit_jump(&mut self, code: Opcode) -> Jump { self.scope.emit_jump(code) }
@@ -798,7 +803,7 @@ where
   fn restore_used(&mut self) { self.scope.restore_used(); }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum Destructure {
   Ident(String),
   Array(Vec<Destructure>),
@@ -806,11 +811,78 @@ pub enum Destructure {
 }
 
 impl Destructure {
-  fn idents_len(&self) -> usize {
+  pub fn idents_len(&self) -> usize {
     match self {
       Self::Ident(_) => 1,
       Self::Array(v) => v.iter().map(|d| d.idents_len()).sum(),
       Self::Object(m, _) => m.values().map(|d| d.idents_len()).sum()
+    }
+  }
+
+  pub fn idents(&self) -> impl Iterator<Item = &str> {
+    match self {
+      Self::Ident(s) => E3::A(once(s.as_str())),
+      Self::Array(v) => E3::B(Box::new(v.iter().flat_map(|d| d.idents())) as Box<dyn Iterator<Item = &str>>),
+      Self::Object(m, o) => E3::C(Box::new(o.iter().flat_map(move |o| m[o].idents())) as Box<dyn Iterator<Item = &str>>)
+    }
+  }
+
+  pub fn types<C: CustomType>(&self, dtype: Type<C>) -> impl Iterator<Item = Type<C>> {
+    match self {
+      Destructure::Ident(_) => vec![dtype].into_iter(),
+      Destructure::Array(v) => v
+        .iter()
+        .enumerate()
+        .flat_map(|(i, d)| {
+          let sub_type = dtype.as_array().get(i).clone();
+          d.types(sub_type)
+        })
+        .collect::<Vec<_>>()
+        .into_iter(),
+      Destructure::Object(m, ord) => ord
+        .iter()
+        .flat_map(|key| {
+          let d = m.get(key).unwrap();
+          let sub_type = dtype.as_object().get(key).clone();
+          d.types(sub_type)
+        })
+        .collect::<Vec<_>>()
+        .into_iter()
+    }
+  }
+
+  pub fn extract<C: CustomType>(&self, dtype: Type<C>, at: usize, extr: ExtractionPart) -> (usize, Extraction) {
+    match self {
+      Destructure::Ident(_) => (1, Extraction::single(extr)),
+      Destructure::Array(v) => {
+        let mut total = 0;
+        let parts = v
+          .iter()
+          .enumerate()
+          .flat_map(|(i, d)| {
+            let sub_type = dtype.as_array().get(i).clone();
+            let (counted, ex) = d.extract(sub_type, at - total, extr.push(i));
+            total += counted;
+            ex.into_parts().into_iter()
+          })
+          .collect();
+        (total, Extraction::from_parts(parts))
+      }
+      Destructure::Object(m, ord) => {
+        let mut total = 0;
+        let parts = ord
+          .iter()
+          .flat_map(|key| {
+            let d = m.get(key).unwrap();
+            let i = dtype.as_object().index_of(key).unwrap();
+            let sub_type = dtype.as_object().get(key).clone();
+            let (counted, ex) = d.extract(sub_type, at - total, extr.push(i));
+            total += counted;
+            ex.into_parts().into_iter()
+          })
+          .collect();
+        (total, Extraction::from_parts(parts))
+      }
     }
   }
 }

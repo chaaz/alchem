@@ -2,7 +2,7 @@
 
 mod util;
 
-use util::{expect_i32, expect_f64, expect_str, expect_bool};
+use util::{expect_bool, expect_f64, expect_i32, expect_str};
 
 #[tokio::test]
 async fn simple_int() { expect_i32("=1", 1).await; }

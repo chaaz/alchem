@@ -1,7 +1,7 @@
 //! The actual VM for parsing the bytecode.
 
 use crate::collapsed::{Chunk, CollapsedInfo, Declared, FuncNative};
-use crate::common::{Closure, Instr, Native, ObjUpvalue, ObjUpvalues, Opcode};
+use crate::common::{Closure, FunctionIndex, Instr, Native, ObjUpvalue, ObjUpvalues, Opcode};
 pub use crate::compiler::{collapse_script, compile, script_to_closure};
 use crate::inline::Inline;
 use crate::types::CustomType;
@@ -50,7 +50,7 @@ impl<C: CustomType + 'static> Vm<C> {
       runtime: self.runtime
     };
 
-    ftr.run_closure(closure, inst_ind, Vec::new()).await
+    ftr.run_closure(closure, FunctionIndex::empty(inst_ind), Vec::new()).await
   }
 }
 
@@ -78,7 +78,7 @@ impl<C: CustomType + 'static> Runner<C> {
     Runner { call_stack: Vec::new(), stack: Stack::new(), globals, open_upvals: OpenUpvalues::new(), runtime }
   }
 
-  pub async fn into_run_value(mut self, value: Value<C>, inst_ind: usize, args: Vec<Value<C>>) -> Value<C> {
+  pub async fn into_run_value(mut self, value: Value<C>, inst_ind: FunctionIndex, args: Vec<Value<C>>) -> Value<C> {
     match value {
       Value::Closure(closure) => self.run_closure(closure, inst_ind, args).await,
       Value::Native(func_native) => self.run_native(func_native, inst_ind, args).await,
@@ -86,7 +86,7 @@ impl<C: CustomType + 'static> Runner<C> {
     }
   }
 
-  pub async fn run_value(&mut self, value: Value<C>, inst_ind: usize, args: Vec<Value<C>>) -> Value<C> {
+  pub async fn run_value(&mut self, value: Value<C>, inst_ind: FunctionIndex, args: Vec<Value<C>>) -> Value<C> {
     match value {
       Value::Closure(closure) => self.run_closure(closure, inst_ind, args).await,
       Value::Native(func_native) => self.run_native(func_native, inst_ind, args).await,
@@ -94,20 +94,29 @@ impl<C: CustomType + 'static> Runner<C> {
     }
   }
 
-  pub async fn run_closure(&mut self, closure: Arc<Closure<C>>, inst_ind: usize, args: Vec<Value<C>>) -> Value<C> {
+  pub async fn run_closure(
+    &mut self, closure: Arc<Closure<C>>, inst_ind: FunctionIndex, args: Vec<Value<C>>
+  ) -> Value<C> {
     self.stack.push(closure.clone().into());
+    let index = inst_ind.index();
+    let args: Vec<_> = if let Some(extracts) = inst_ind.extracts().as_ref() {
+      assert_eq!(extracts.len(), args.len());
+      args.into_iter().zip(extracts.iter()).flat_map(|(a, e)| e.extracted(a)).collect()
+    } else {
+      panic!("no extracts for alchemy run_value");
+    };
     debug_assert!(args.len() < 255);
     let args_len = args.len() as u8;
     self.stack.append_vec(args);
 
-    call_closure(closure, inst_ind, args_len, &mut self.stack, true).perform(&mut self.call_stack);
+    call_closure(closure, index, args_len, &mut self.stack, true).perform(&mut self.call_stack);
     self.run_loop().await
   }
 
   pub async fn run_native(
-    &mut self, func_native: Arc<FuncNative<C>>, inst_ind: usize, args: Vec<Value<C>>
+    &mut self, func_native: Arc<FuncNative<C>>, inst_ind: FunctionIndex, args: Vec<Value<C>>
   ) -> Value<C> {
-    let native_info = func_native.instances()[inst_ind].clone();
+    let native_info = func_native.instances()[inst_ind.index()].clone();
     let native = func_native.native();
     (native)(args, native_info, self).await
   }
@@ -324,14 +333,17 @@ fn handle_op<C: CustomType + 'static>(
         Value::Json(stack[stack_len - 1].as_json_mut().as_object_mut().unwrap().remove(name).unwrap())
     }
     Opcode::Extract(extn) => {
-      let mut arr = stack.pop();
-      for part in extn.parts() {
-        let mut target = &mut arr;
-        for ind in part.inds() {
-          target = target.as_array_mut().get_mut(*ind).unwrap();
-        }
-        stack.push(target.shift());
+      let arr = stack.pop();
+      for target in extn.extracted(arr) {
+        stack.push(target);
       }
+      // for part in extn.parts() {
+      //   let mut target = &mut arr;
+      //   for ind in part.inds() {
+      //     target = target.as_array_mut().get_mut(*ind).unwrap();
+      //   }
+      //   stack.push(target.shift());
+      // }
     }
   }
 
@@ -432,9 +444,7 @@ fn call_value<C: CustomType + 'static>(stack: &mut Stack<C>, inst_ind: usize, ar
 fn call_closure<C: CustomType + 'static>(
   f: Arc<Closure<C>>, inst_ind: usize, argc: u8, stack: &mut Stack<C>, exit: bool
 ) -> StackOp<C> {
-  if argc != f.arity() {
-    panic!("Calling arity {} with {} args.", f.arity(), argc);
-  }
+  assert_eq!(argc, f.arity(), "Calling arity {} with {} args.", f.arity(), argc);
   let stack_len = stack.len();
   StackOp::Push(CallFrame::new(f, inst_ind, stack_len - (argc as usize) - 1, exit))
 }

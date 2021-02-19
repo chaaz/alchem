@@ -7,7 +7,7 @@
 
 mod util;
 
-use util::{expect_i32};
+use util::expect_i32;
 
 #[tokio::test]
 async fn fourty_two() { expect_i32("=fourty_two()", 42).await; }

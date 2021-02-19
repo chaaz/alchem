@@ -7,9 +7,9 @@ use std::fmt;
 use std::mem;
 use std::sync::Arc;
 
-pub use crate::common::{Closure, Function, Globals, MorphStatus, NativeInfo};
+pub use crate::common::{Closure, Function, FunctionIndex, Globals, MorphStatus, NativeInfo};
 pub use crate::natives::{add_std, convert_to_json};
-pub use crate::types::{CustomType, CustomValue, IsSingle, NoCustom, NoValue, Object, Runtime, Type, Array};
+pub use crate::types::{Array, CustomType, CustomValue, IsSingle, NoCustom, NoValue, Object, Runtime, Type};
 
 pub fn add_native<C>(globals: &mut Globals<C>, name: impl ToString, arity: u8, native: Native<C>, typen: TypeNative<C>)
 where
@@ -145,7 +145,6 @@ impl<C: CustomType> Value<C> {
       Value::Void => Self::Void
     }
   }
-
 
   pub fn clone_function(&self) -> Value<C> {
     match self {

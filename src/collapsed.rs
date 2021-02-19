@@ -3,7 +3,7 @@
 //! It may be helpful to think of the types defined here are the "real" types, and their equivalents in `common`
 //! and `value` as builders.
 
-use crate::common::{Closure, Instr, MorphStatus, Native, NativeInfo};
+use crate::common::{Closure, FunctionIndex, Instr, MorphStatus, Native, NativeInfo};
 use crate::compiler::script_to_closure;
 use crate::types::{Array, CustomType, Object, Type};
 use crate::value::Value;
@@ -167,7 +167,7 @@ impl<C: CustomType + 'static> FuncNative<C> {
 
 #[derive(Clone)]
 pub struct CollapsedInfo<C: CustomType> {
-  call_indexes: Vec<usize>,
+  call_indexes: Vec<FunctionIndex>,
   collapsed: Vec<CollapsedType<C>>,
   eval_functions: Vec<Arc<Closure<C>>>
 }
@@ -179,10 +179,17 @@ impl<C: CustomType + 'static> CollapsedInfo<C> {
     CollapsedInfo { call_indexes, collapsed, eval_functions }
   }
 
-  pub fn call_indexes(&self) -> &[usize] { &self.call_indexes }
+  pub fn call_indexes(&self) -> &[FunctionIndex] { &self.call_indexes }
   pub fn types(&self) -> &[CollapsedType<C>] { &self.collapsed }
   pub fn eval_functions(&self) -> &[Arc<Closure<C>>] { &self.eval_functions }
   pub fn into_types(self) -> Vec<CollapsedType<C>> { self.collapsed }
+  pub fn into_call_indexes(self) -> Vec<FunctionIndex> { self.call_indexes }
+
+  #[allow(clippy::type_complexity)]
+  pub fn into_parts(self) -> (Vec<FunctionIndex>, Vec<CollapsedType<C>>, Vec<Arc<Closure<C>>>) {
+    let CollapsedInfo { call_indexes, collapsed, eval_functions } = self;
+    (call_indexes, collapsed, eval_functions)
+  }
 }
 
 pub struct Function<C: CustomType> {

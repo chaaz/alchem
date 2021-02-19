@@ -2,7 +2,7 @@
 
 mod util;
 
-use util::{expect_i32, expect_bool};
+use util::{expect_bool, expect_i32};
 
 #[tokio::test]
 async fn create_simple() { expect_i32("a={a:1};=a.a", 1).await; }
@@ -27,6 +27,15 @@ async fn shorthand() { expect_i32("a=1;b=2;c=3;y={c};x={y,a,b};=x.y.c", 3).await
 
 #[tokio::test]
 async fn destructure() { expect_i32("{a:x}={a:1};=x", 1).await; }
+
+#[tokio::test]
+async fn destr_args() { expect_i32("f=fn({a:y,b:z},x){=y+z+x};=f({c:3,b:1,a:2},3)", 6).await; }
+
+#[tokio::test]
+async fn destr_args_short() { expect_i32("f=fn({a,b},x){=a+b+x};=f({c:3,b:1,a:2},3)", 6).await; }
+
+#[tokio::test]
+async fn destr_args_late() { expect_i32("f=fn(x,{a:a,b:b}){=a+b+x};=f(3,{c:3,b:1,a:2})", 6).await; }
 
 #[tokio::test]
 async fn destr_assigned() { expect_i32("a={a:1};{a:x}=a;=x", 1).await; }

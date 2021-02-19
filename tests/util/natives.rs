@@ -42,7 +42,7 @@ async fn ntvt_recall(args: Vec<Tp>, globals: &Gl) -> Status {
     info.add_call_index(inst_ind);
     MorphStatus::NativeCompleted(info, ftype)
   } else {
-    MorphStatus::Known(Type::depends(&func, inst_ind))
+    MorphStatus::Known(Type::depends(&func, inst_ind.index()))
   }
 }
 
@@ -50,7 +50,7 @@ async fn ntvt_recall(args: Vec<Tp>, globals: &Gl) -> Status {
 async fn ntv_recall(vals: Vec<Val>, info: CoInfo, runner: &mut Run) -> Val {
   let mut vals = vals;
   let f = vals.remove(0);
-  let inst_ind = info.call_indexes()[0];
+  let inst_ind = info.into_call_indexes().into_iter().next().unwrap();
   runner.run_value(f, inst_ind, Vec::new()).await
 }
 
@@ -66,7 +66,7 @@ async fn ntvt_recall_1(args: Vec<Tp>, globals: &Gl) -> Status {
     info.add_call_index(inst_ind);
     MorphStatus::NativeCompleted(info, ftype)
   } else {
-    MorphStatus::Known(Type::depends(&func, inst_ind))
+    MorphStatus::Known(Type::depends(&func, inst_ind.index()))
   }
 }
 
@@ -75,7 +75,7 @@ async fn ntv_recall_1(vals: Vec<Val>, info: CoInfo, runner: &mut Run) -> Val {
   let mut vals = vals.into_iter();
   let f = vals.next().unwrap();
   let a = vals.next().unwrap();
-  let inst_ind = info.call_indexes()[0];
+  let inst_ind = info.into_call_indexes().into_iter().next().unwrap();
   runner.run_value(f, inst_ind, vec![a]).await
 }
 
@@ -92,7 +92,7 @@ async fn ntvt_reloop(args: Vec<Tp>, globals: &Gl) -> Status {
     info.add_call_index(inst_ind);
     MorphStatus::NativeCompleted(info, ftype)
   } else {
-    MorphStatus::Known(Type::depends(&f, inst_ind))
+    MorphStatus::Known(Type::depends(&f, inst_ind.index()))
   }
 }
 
@@ -100,7 +100,7 @@ async fn ntvt_reloop(args: Vec<Tp>, globals: &Gl) -> Status {
 async fn ntv_reloop(vals: Vec<Val>, info: CoInfo, runner: &mut Run) -> Val {
   let mut vals = vals;
   let mut f = vals.remove(0);
-  let inst_ind = info.call_indexes()[0];
-  let _ = runner.run_value(f.shift(), inst_ind, Vec::new()).await;
+  let inst_ind = info.into_call_indexes().into_iter().next().unwrap();
+  let _ = runner.run_value(f.shift(), inst_ind.clone(), Vec::new()).await;
   runner.run_value(f, inst_ind, Vec::new()).await
 }

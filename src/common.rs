@@ -1,7 +1,7 @@
 //! Common info for the parser.
 
 use crate::collapsed::{CollapsedInfo, CollapsedType};
-use crate::compiler::Compiler;
+use crate::compiler::{Compiler, Destructure};
 use crate::scanner::Token;
 use crate::scope::ZeroMode;
 use crate::types::{CustomType, DependsOn, Type};
@@ -58,7 +58,7 @@ impl<C: CustomType + 'static> Function<C> {
   }
 
   pub fn new_alchem(
-    arity: u8, param_names: Vec<String>, code: Vec<Token>, known_upvals: KnownUpvals<C>
+    arity: u8, param_names: Vec<Destructure>, code: Vec<Token>, known_upvals: KnownUpvals<C>
   ) -> Function<C> {
     Function { arity, fn_type: FnType::Alchem(param_names, code), instances: Mutex::new(Vec::new()), known_upvals }
   }
@@ -79,10 +79,25 @@ impl<C: CustomType + 'static> Function<C> {
   }
 
   pub fn is_single_use(&self) -> bool { self.known_upvals.values().any(|(_, t)| t.is_single_use()) }
-  pub fn into_collapse(self) -> (u8, Vec<Monomorph<C>>) { (self.arity, self.instances.into_inner().unwrap()) }
+
+  pub fn into_collapse(self) -> (u8, Vec<Monomorph<C>>) {
+    let arity = match self.fn_type() {
+      FnType::Native(..) => self.arity,
+      FnType::Alchem(pnames, _) => pnames.iter().map(|d| d.idents_len()).sum::<usize>() as u8
+    };
+    (arity, self.instances.into_inner().unwrap())
+  }
+
   pub fn fn_type(&self) -> &FnType<C> { &self.fn_type }
   pub fn arity(&self) -> u8 { self.arity }
   pub fn smart_name(&self) -> String { "...".into() }
+
+  pub fn param_names(&self) -> Option<&[Destructure]> {
+    match self.fn_type() {
+      FnType::Native(..) => None,
+      FnType::Alchem(pnames, _) => Some(pnames)
+    }
+  }
 
   pub fn incr_arity(&mut self) -> u8 {
     self.arity += 1;
@@ -90,6 +105,31 @@ impl<C: CustomType + 'static> Function<C> {
   }
 
   pub async fn find_or_build(
+    self: Arc<Function<C>>, args: Vec<Type<C>>, globals: &Globals<C>
+  ) -> (FunctionIndex, Option<Type<C>>) {
+    match self.fn_type() {
+      FnType::Native(..) => {
+        let (i, ftype) = self.find_or_build_ext(args, globals).await;
+        (FunctionIndex::native(i), ftype)
+      }
+      FnType::Alchem(pnames, _) => {
+        assert_eq!(args.len(), pnames.len());
+        let extrs = pnames
+          .iter()
+          .zip(args.iter())
+          .map(|(d, a)| {
+            let idents_len = d.idents_len();
+            d.extract(a.clone(), idents_len, ExtractionPart::empty()).1
+          })
+          .collect();
+        let new_args = pnames.iter().zip(args.iter()).flat_map(|(d, a)| d.types(a.clone())).collect();
+        let (i, ftype) = self.find_or_build_ext(new_args, globals).await;
+        (FunctionIndex::alchem(i, extrs), ftype)
+      }
+    }
+  }
+
+  pub async fn find_or_build_ext(
     self: Arc<Function<C>>, args: Vec<Type<C>>, globals: &Globals<C>
   ) -> (usize, Option<Type<C>>) {
     match self.find_known_type(&args) {
@@ -281,9 +321,24 @@ impl<C: CustomType + 'static> Function<C> {
   }
 }
 
+#[derive(Clone, Debug)]
+pub struct FunctionIndex {
+  index: usize,
+  extracts: Option<Vec<Extraction>>
+}
+
+impl FunctionIndex {
+  pub fn native(index: usize) -> FunctionIndex { FunctionIndex { index, extracts: None } }
+  pub fn alchem(index: usize, e: Vec<Extraction>) -> FunctionIndex { FunctionIndex { index, extracts: Some(e) } }
+  pub fn empty(index: usize) -> FunctionIndex { FunctionIndex { index, extracts: Some(Vec::new()) } }
+
+  pub fn index(&self) -> usize { self.index }
+  pub fn extracts(&self) -> &Option<Vec<Extraction>> { &self.extracts }
+}
+
 pub enum FnType<C: CustomType> {
   Native(Native<C>, TypeNative<C>, TypeMatch<C>),
-  Alchem(Vec<String>, Vec<Token>)
+  Alchem(Vec<Destructure>, Vec<Token>)
 }
 
 impl<C: CustomType> FnType<C> {
@@ -344,7 +399,7 @@ impl<C: CustomType + 'static> MorphStatus<C> {
 
 #[derive(Clone)]
 pub struct NativeInfo<C: CustomType> {
-  call_indexes: Vec<usize>,
+  call_indexes: Vec<FunctionIndex>,
   collapsed: Vec<CollapsedType<C>>,
   eval_functions: Vec<Arc<Function<C>>>
 }
@@ -358,12 +413,12 @@ impl<C: CustomType> NativeInfo<C> {
     NativeInfo { call_indexes: Vec::new(), collapsed: Vec::new(), eval_functions: Vec::new() }
   }
 
-  pub fn add_call_index(&mut self, ci: usize) { self.call_indexes.push(ci); }
+  pub fn add_call_index(&mut self, ci: FunctionIndex) { self.call_indexes.push(ci); }
   pub fn add_type(&mut self, t: CollapsedType<C>) { self.collapsed.push(t); }
   pub fn add_eval_function(&mut self, t: Arc<Function<C>>) { self.eval_functions.push(t); }
 
   #[allow(clippy::type_complexity)]
-  pub fn into_parts(self) -> (Vec<usize>, Vec<CollapsedType<C>>, Vec<Arc<Function<C>>>) {
+  pub fn into_parts(self) -> (Vec<FunctionIndex>, Vec<CollapsedType<C>>, Vec<Arc<Function<C>>>) {
     let NativeInfo { call_indexes, collapsed, eval_functions } = self;
     (call_indexes, collapsed, eval_functions)
   }
@@ -677,7 +732,7 @@ impl Opcode {
   pub fn initial_jump() -> Opcode { Self::Jump(0) }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Extraction {
   parts: Vec<ExtractionPart>
 }
@@ -688,9 +743,19 @@ impl Extraction {
   pub fn into_parts(self) -> Vec<ExtractionPart> { self.parts }
   pub fn idents_len(&self) -> usize { self.parts.len() }
   pub fn parts(&self) -> &[ExtractionPart] { &self.parts }
+
+  pub fn extracted<C: CustomType>(&self, mut val: Value<C>) -> impl Iterator<Item = Value<C>> + '_ {
+    self.parts().iter().map(move |part| {
+      let mut target = &mut val;
+      for ind in part.inds() {
+        target = target.as_array_mut().get_mut(*ind).unwrap();
+      }
+      target.shift()
+    })
+  }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ExtractionPart {
   inds: Vec<usize>
 }

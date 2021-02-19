@@ -1,12 +1,13 @@
 //! Some natives to add to the standard Alchem compile/runtime.
 
 use crate::collapsed::{CollapsedInfo, CollapsedType};
+use crate::common::FunctionIndex;
 use crate::value::{add_native, match_native, CustomType, Function, Globals, MorphStatus, NativeInfo, Type, Value};
 use crate::vm::{compile, Runner};
 use crate::{native_fn, native_tfn};
 use macro_rules_attribute::macro_rules_attribute;
-use std::sync::Arc;
 use serde_json::{Number, Value as Json};
+use std::sync::Arc;
 
 pub fn add_std<C: CustomType + 'static>(globals: &mut Globals<C>) {
   add_native(globals, "show", 1, ntv_show, ntvt_show);
@@ -66,7 +67,7 @@ async fn ntv_eval<C: CustomType + 'static>(
   _vals: Vec<Value<C>>, info: CollapsedInfo<C>, runner: &mut Runner<C>
 ) -> Value<C> {
   let closure = info.eval_functions()[0].clone();
-  runner.run_closure(closure, 0, Vec::new()).await
+  runner.run_closure(closure, FunctionIndex::empty(0), Vec::new()).await
 }
 
 #[macro_rules_attribute(native_tfn!)]
