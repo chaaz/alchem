@@ -4,8 +4,7 @@ use alchem::collapsed::CollapsedInfo;
 use alchem::value::{add_native, add_std, CustomType, CustomValue, Globals, IsSingle, MorphStatus, NativeInfo, Type,
                     Value};
 use alchem::vm::{Runner, Vm};
-use alchem::{native_fn, native_tfn};
-use macro_rules_attribute::macro_rules_attribute;
+use alchem_macros::{native_fn, native_tfn};
 
 #[allow(dead_code)]
 pub async fn expect_i32(script: &str, expected: i32) {
@@ -64,15 +63,15 @@ type Tp = Type<OneUse>;
 type Gl = Globals<OneUse>;
 type Status = MorphStatus<OneUse>;
 
-#[macro_rules_attribute(native_tfn!)]
-async fn ntvt_u1(args: Vec<Tp>, globals: &Gl) -> Status {
+#[native_tfn]
+async fn ntvt_u1(_args: Vec<Tp>, _globals: &Gl) -> Status {
   MorphStatus::NativeCompleted(Info::new(), Type::Custom(OneUse))
 }
 
-#[macro_rules_attribute(native_fn!)]
-async fn ntv_u1(vals: Vec<Val>, info: CoInfo, runner: &mut Run) -> Val { Val::Custom(OneVal) }
+#[native_fn]
+async fn ntv_u1(_vals: Vec<Val>, _info: CoInfo, _runner: &mut Run) -> Val { Val::Custom(OneVal) }
 
-#[macro_rules_attribute(native_tfn!)]
+#[native_tfn]
 async fn ntvt_reloop(args: Vec<Tp>, globals: &Gl) -> Status {
   assert_eq!(args.len(), 1);
   let f = args[0].as_function().upgrade().unwrap();
@@ -89,7 +88,7 @@ async fn ntvt_reloop(args: Vec<Tp>, globals: &Gl) -> Status {
   }
 }
 
-#[macro_rules_attribute(native_fn!)]
+#[native_fn]
 async fn ntv_reloop(vals: Vec<Val>, info: CoInfo, runner: &mut Run) -> Val {
   let mut vals = vals;
   let mut f = vals.remove(0);

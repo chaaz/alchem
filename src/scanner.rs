@@ -1,5 +1,6 @@
 //! The scanner for the alchem language.
 
+use crate::pick;
 use std::str::CharIndices;
 use std::vec::IntoIter;
 

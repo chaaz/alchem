@@ -6,6 +6,7 @@
 
 use crate::common::{ExtractionPart, Opcode};
 use crate::compiler::{Compiler, Destructure};
+use crate::pick;
 use crate::scanner::TokenTypeDiscr;
 use crate::types::{Array, CustomType, Object, Type};
 use std::collections::HashMap;

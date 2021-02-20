@@ -7,6 +7,7 @@ use crate::common::{Closure, FunctionIndex, Instr, MorphStatus, Native, NativeIn
 use crate::compiler::script_to_closure;
 use crate::types::{Array, CustomType, Object, Type};
 use crate::value::Value;
+use crate::{pick, pick_opt};
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;

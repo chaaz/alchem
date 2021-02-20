@@ -2,6 +2,7 @@
 
 use crate::common::{Function, MorphIndex};
 use crate::either::IterEither3::{A, B, C};
+use crate::pick;
 use std::collections::HashMap;
 use std::fmt;
 use std::iter::{empty, once};

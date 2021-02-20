@@ -4,9 +4,8 @@ use alchem::collapsed::CollapsedInfo;
 use alchem::errors::Result;
 use alchem::value::{add_native, Globals, MorphStatus, NativeInfo, NoCustom, Type, Value};
 use alchem::vm::{Runner, Vm};
-use alchem::{native_fn, native_tfn};
+use alchem_macros::{native_fn, native_tfn};
 use clap::{crate_version, App, AppSettings, Arg, ArgMatches};
-use macro_rules_attribute::macro_rules_attribute;
 
 /// Get the values from the expected command-line options.
 pub async fn execute() -> Result<()> {
@@ -56,25 +55,25 @@ type Tp = Type<NoCustom>;
 type Gl = Globals<NoCustom>;
 type Status = MorphStatus<NoCustom>;
 
-#[macro_rules_attribute(native_tfn!)]
+#[native_tfn]
 async fn ntvt_print(_args: Vec<Tp>, _globals: &Gl) -> Status {
   let info = NativeInfo::new();
   MorphStatus::NativeCompleted(info, Type::Number)
 }
 
-#[macro_rules_attribute(native_fn!)]
+#[native_fn]
 async fn ntv_print(vals: Vec<Val>, _info: CoInfo, _runner: &mut Run) -> Val {
   println!("*** PRINT: {:?}", vals[0]);
   Value::Int(1)
 }
 
-#[macro_rules_attribute(native_tfn!)]
+#[native_tfn]
 async fn ntvt_number(_a: Vec<Tp>, _b: &Gl) -> Status { MorphStatus::NativeCompleted(NativeInfo::new(), Type::Number) }
 
-#[macro_rules_attribute(native_fn!)]
+#[native_fn]
 async fn ntv_number(_argv: Vec<Val>, _info: CoInfo, _runner: &mut Run) -> Val { Value::Int(42) }
 
-#[macro_rules_attribute(native_tfn!)]
+#[native_tfn]
 async fn ntvt_recall(args: Vec<Tp>, globals: &Gl) -> Status {
   let mut info = NativeInfo::new();
   let func = args[0].as_function().upgrade().unwrap();
@@ -88,7 +87,7 @@ async fn ntvt_recall(args: Vec<Tp>, globals: &Gl) -> Status {
   }
 }
 
-#[macro_rules_attribute(native_fn!)]
+#[native_fn]
 async fn ntv_recall(vals: Vec<Val>, info: CoInfo, runner: &mut Run) -> Val {
   let f = vals[0].as_closure();
   let inst_ind = info.into_call_indexes().into_iter().next().unwrap();

@@ -10,6 +10,7 @@ use std::sync::Arc;
 pub use crate::common::{Closure, Function, FunctionIndex, Globals, MorphStatus, NativeInfo};
 pub use crate::natives::{add_std, convert_to_json};
 pub use crate::types::{Array, CustomType, CustomValue, IsSingle, NoCustom, NoValue, Object, Runtime, Type};
+use crate::{pick, pick_opt};
 
 pub fn add_native<C>(globals: &mut Globals<C>, name: impl ToString, arity: u8, native: Native<C>, typen: TypeNative<C>)
 where
@@ -473,104 +474,6 @@ impl<C: CustomType> Declared<C> {
 fn concat(v1: &impl ToString, v2: &impl ToString) -> String { format!("{}{}", v1.to_string(), v2.to_string()) }
 
 fn is_eq(v1: f64, v2: f64) -> bool { (v1 - v2).abs() < f64::EPSILON }
-
-// convert
-//
-// ```
-// async fn print(
-//   vals: Vec<Value>, info: NativeInfo, run: &mut Runner
-// ) -> Value
-// ```
-//
-// to
-//
-// ```
-// fn print<'r>(
-//   vals: Vec<Value>, info: NativeInfo, run: &'r mut Runner
-// ) -> Pin<Box<dyn Future<Output = Value> + Send + 'r>>`
-// ```
-
-#[macro_export]
-macro_rules! native_fn {
-  (
-    $( #[$attr:meta] )*
-    $pub:vis
-    async
-    fn $fname:ident (
-      $arg1_i:ident : $arg1_t:ty, $arg2_i:ident : $arg2_t:ty, $arg3_i:ident : &mut $arg3_t:ty
-    ) -> $Ret:ty {
-      $($body:tt)*
-    }
-  ) => (
-    $( #[$attr] )*
-    $pub
-    fn $fname<'r> (
-      $arg1_i : $arg1_t, $arg2_i : $arg2_t, $arg3_i : &'r mut $arg3_t
-    ) -> ::std::pin::Pin<::std::boxed::Box<dyn ::std::future::Future<Output = $Ret> + ::std::marker::Send + 'r>>
-    {
-      ::std::boxed::Box::pin(async move { $($body)* })
-    }
-  );
-
-  (
-    $( #[$attr:meta] )*
-    $pub:vis
-    async
-    fn $fname:ident <C: CustomType + 'static> (
-      $arg1_i:ident : $arg1_t:ty, $arg2_i:ident : $arg2_t:ty, $arg3_i:ident : &mut $arg3_t:ty
-    ) -> $Ret:ty {
-      $($body:tt)*
-    }
-  ) => (
-    $( #[$attr] )*
-    $pub
-    fn $fname <'r, C: CustomType + 'static> (
-      $arg1_i : $arg1_t, $arg2_i : $arg2_t, $arg3_i : &'r mut $arg3_t
-    ) -> ::std::pin::Pin<::std::boxed::Box<dyn ::std::future::Future<Output = $Ret> + ::std::marker::Send + 'r>>
-    {
-      ::std::boxed::Box::pin(async move { $($body)* })
-    }
-  )
-}
-
-#[macro_export]
-macro_rules! native_tfn {
-  (
-    $( #[$attr:meta] )*
-    $pub:vis async fn $fname:ident (
-      $arg1_i:ident : $arg1_t:ty, $arg3_i:ident : &$arg3_t:ty
-    ) -> $Ret:ty {
-      $($body:tt)*
-    }
-  ) => (
-    $( #[$attr] )*
-    $pub
-    fn $fname<'r> (
-      $arg1_i : $arg1_t, $arg3_i : &'r $arg3_t
-    ) -> ::std::pin::Pin<::std::boxed::Box<dyn ::std::future::Future<Output = $Ret> + ::std::marker::Send + 'r>>
-    {
-      ::std::boxed::Box::pin(async move { $($body)* })
-    }
-  );
-
-  (
-    $( #[$attr:meta] )*
-    $pub:vis async fn $fname:ident <C:CustomType + 'static> (
-      $arg1_i:ident : $arg1_t:ty, $arg3_i:ident : &$arg3_t:ty
-    ) -> $Ret:ty {
-      $($body:tt)*
-    }
-  ) => (
-    $( #[$attr] )*
-    $pub
-    fn $fname<'r, C:CustomType + 'static> (
-      $arg1_i : $arg1_t, $arg3_i : &'r $arg3_t
-    ) -> ::std::pin::Pin<::std::boxed::Box<dyn ::std::future::Future<Output = $Ret> + ::std::marker::Send + 'r>>
-    {
-      ::std::boxed::Box::pin(async move { $($body)* })
-    }
-  )
-}
 
 #[cfg(test)]
 mod test {

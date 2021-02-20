@@ -3,8 +3,7 @@
 use alchem::collapsed::CollapsedInfo;
 use alchem::value::{add_native, add_std, Globals, MorphStatus, NativeInfo, NoCustom, Type, Value};
 use alchem::vm::Runner;
-use alchem::{native_fn, native_tfn};
-use macro_rules_attribute::macro_rules_attribute;
+use alchem_macros::{native_fn, native_tfn};
 
 type Val = Value<NoCustom>;
 type Info = NativeInfo<NoCustom>;
@@ -22,15 +21,15 @@ pub fn add_all_natives(globals: &mut Gl) {
   add_native(globals, "reloop", 1, ntv_reloop, ntvt_reloop);
 }
 
-#[macro_rules_attribute(native_tfn!)]
+#[native_tfn]
 async fn ntvt_number(_args: Vec<Tp>, _globals: &Gl) -> Status {
   MorphStatus::NativeCompleted(Info::new(), Type::Number)
 }
 
-#[macro_rules_attribute(native_fn!)]
+#[native_fn]
 async fn ntv_number(_argv: Vec<Val>, _info: CoInfo, _runner: &mut Run) -> Val { Value::Int(42) }
 
-#[macro_rules_attribute(native_tfn!)]
+#[native_tfn]
 async fn ntvt_recall(args: Vec<Tp>, globals: &Gl) -> Status {
   assert_eq!(args.len(), 1);
   let func = args[0].as_function().upgrade().unwrap();
@@ -46,7 +45,7 @@ async fn ntvt_recall(args: Vec<Tp>, globals: &Gl) -> Status {
   }
 }
 
-#[macro_rules_attribute(native_fn!)]
+#[native_fn]
 async fn ntv_recall(vals: Vec<Val>, info: CoInfo, runner: &mut Run) -> Val {
   let mut vals = vals;
   let f = vals.remove(0);
@@ -54,7 +53,7 @@ async fn ntv_recall(vals: Vec<Val>, info: CoInfo, runner: &mut Run) -> Val {
   runner.run_value(f, inst_ind, Vec::new()).await
 }
 
-#[macro_rules_attribute(native_tfn!)]
+#[native_tfn]
 async fn ntvt_recall_1(args: Vec<Tp>, globals: &Gl) -> Status {
   let mut args = args.into_iter();
   let func = args.next().unwrap().as_function().upgrade().unwrap();
@@ -70,7 +69,7 @@ async fn ntvt_recall_1(args: Vec<Tp>, globals: &Gl) -> Status {
   }
 }
 
-#[macro_rules_attribute(native_fn!)]
+#[native_fn]
 async fn ntv_recall_1(vals: Vec<Val>, info: CoInfo, runner: &mut Run) -> Val {
   let mut vals = vals.into_iter();
   let f = vals.next().unwrap();
@@ -79,7 +78,7 @@ async fn ntv_recall_1(vals: Vec<Val>, info: CoInfo, runner: &mut Run) -> Val {
   runner.run_value(f, inst_ind, vec![a]).await
 }
 
-#[macro_rules_attribute(native_tfn!)]
+#[native_tfn]
 async fn ntvt_reloop(args: Vec<Tp>, globals: &Gl) -> Status {
   assert_eq!(args.len(), 1);
   let f = args[0].as_function().upgrade().unwrap();
@@ -96,7 +95,7 @@ async fn ntvt_reloop(args: Vec<Tp>, globals: &Gl) -> Status {
   }
 }
 
-#[macro_rules_attribute(native_fn!)]
+#[native_fn]
 async fn ntv_reloop(vals: Vec<Val>, info: CoInfo, runner: &mut Run) -> Val {
   let mut vals = vals;
   let mut f = vals.remove(0);

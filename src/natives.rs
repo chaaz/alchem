@@ -4,8 +4,7 @@ use crate::collapsed::{CollapsedInfo, CollapsedType};
 use crate::common::FunctionIndex;
 use crate::value::{add_native, match_native, CustomType, Function, Globals, MorphStatus, NativeInfo, Type, Value};
 use crate::vm::{compile, Runner};
-use crate::{native_fn, native_tfn};
-use macro_rules_attribute::macro_rules_attribute;
+use alchem_macros::{native_fn, native_tfn};
 use serde_json::{Number, Value as Json};
 use std::sync::Arc;
 
@@ -16,13 +15,13 @@ pub fn add_std<C: CustomType + 'static>(globals: &mut Globals<C>) {
   add_native(globals, "to_json", 1, ntv_to_json, ntvt_to_json);
 }
 
-#[macro_rules_attribute(native_tfn!)]
+#[native_tfn]
 async fn ntvt_show<C: CustomType + 'static>(args: Vec<Type<C>>, _globals: &Globals<C>) -> MorphStatus<C> {
   assert!(args[0].is_string() || args[0].is_number() || args[0].is_bool() || args[0].is_json());
   MorphStatus::NativeCompleted(NativeInfo::new(), Type::String(None))
 }
 
-#[macro_rules_attribute(native_fn!)]
+#[native_fn]
 async fn ntv_show<C: CustomType + 'static>(
   vals: Vec<Value<C>>, _info: CollapsedInfo<C>, _runner: &mut Runner<C>
 ) -> Value<C> {
@@ -50,7 +49,7 @@ fn ntvm_eval<C: CustomType + 'static>(a1: &[Type<C>], a2: &[Type<C>]) -> bool {
   c1 == c2
 }
 
-#[macro_rules_attribute(native_tfn!)]
+#[native_tfn]
 async fn ntvt_eval<C: CustomType + 'static>(args: Vec<Type<C>>, globals: &Globals<C>) -> MorphStatus<C> {
   let code = args[0].as_string().as_deref().expect("Eval argument must be a literal string.");
   let (scope, stype) = compile(code, &globals).await;
@@ -62,7 +61,7 @@ async fn ntvt_eval<C: CustomType + 'static>(args: Vec<Type<C>>, globals: &Global
   MorphStatus::NativeCompleted(info, stype)
 }
 
-#[macro_rules_attribute(native_fn!)]
+#[native_fn]
 async fn ntv_eval<C: CustomType + 'static>(
   _vals: Vec<Value<C>>, info: CollapsedInfo<C>, runner: &mut Runner<C>
 ) -> Value<C> {
@@ -70,13 +69,13 @@ async fn ntv_eval<C: CustomType + 'static>(
   runner.run_closure(closure, FunctionIndex::empty(0), Vec::new()).await
 }
 
-#[macro_rules_attribute(native_tfn!)]
+#[native_tfn]
 async fn ntvt_print<C: CustomType + 'static>(_args: Vec<Type<C>>, _globals: &Globals<C>) -> MorphStatus<C> {
   let info = NativeInfo::new();
   MorphStatus::NativeCompleted(info, Type::Number)
 }
 
-#[macro_rules_attribute(native_fn!)]
+#[native_fn]
 async fn ntv_print<C: CustomType + 'static>(
   vals: Vec<Value<C>>, _info: CollapsedInfo<C>, _runner: &mut Runner<C>
 ) -> Value<C> {
@@ -84,7 +83,7 @@ async fn ntv_print<C: CustomType + 'static>(
   Value::Int(1)
 }
 
-#[macro_rules_attribute(native_tfn!)]
+#[native_tfn]
 async fn ntvt_to_json<C: CustomType + 'static>(args: Vec<Type<C>>, _globals: &Globals<C>) -> MorphStatus<C> {
   let mut info = NativeInfo::new();
   assert_eq!(args.len(), 1);
@@ -92,7 +91,7 @@ async fn ntvt_to_json<C: CustomType + 'static>(args: Vec<Type<C>>, _globals: &Gl
   MorphStatus::NativeCompleted(info, Type::Json)
 }
 
-#[macro_rules_attribute(native_fn!)]
+#[native_fn]
 async fn ntv_to_json<C: CustomType + 'static>(
   vals: Vec<Value<C>>, info: CollapsedInfo<C>, _runner: &mut Runner<C>
 ) -> Value<C> {
