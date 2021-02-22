@@ -1,6 +1,6 @@
 //! Some natives to add to the standard Alchem compile/runtime.
 
-use crate::collapsed::{CollapsedInfo, CollapsedType};
+use crate::collapsed::{CollapsedInfo, CollapsedType, RunMeta};
 use crate::common::FunctionIndex;
 use crate::value::{add_native, match_native, CustomType, Function, Globals, MorphStatus, NativeInfo, Type, Value};
 use crate::vm::{compile, Runner};
@@ -23,7 +23,7 @@ async fn ntvt_show<C: CustomType + 'static>(args: Vec<Type<C>>, _globals: &Globa
 
 #[native_fn]
 async fn ntv_show<C: CustomType + 'static>(
-  vals: Vec<Value<C>>, _info: CollapsedInfo<C>, _runner: &mut Runner<C>
+  vals: Vec<Value<C>>, _info: CollapsedInfo<C>, _meta: RunMeta<C>, _runner: &mut Runner<C>
 ) -> Value<C> {
   let mut vals = vals.into_iter();
   let val = vals.next().unwrap();
@@ -63,10 +63,10 @@ async fn ntvt_eval<C: CustomType + 'static>(args: Vec<Type<C>>, globals: &Global
 
 #[native_fn]
 async fn ntv_eval<C: CustomType + 'static>(
-  _vals: Vec<Value<C>>, info: CollapsedInfo<C>, runner: &mut Runner<C>
+  _vals: Vec<Value<C>>, info: CollapsedInfo<C>, meta: RunMeta<C>, runner: &mut Runner<C>
 ) -> Value<C> {
   let closure = info.eval_functions()[0].clone();
-  runner.run_closure(closure, FunctionIndex::empty(0), Vec::new()).await
+  runner.run_closure(closure, FunctionIndex::empty(0), meta, Vec::new()).await
 }
 
 #[native_tfn]
@@ -77,7 +77,7 @@ async fn ntvt_print<C: CustomType + 'static>(_args: Vec<Type<C>>, _globals: &Glo
 
 #[native_fn]
 async fn ntv_print<C: CustomType + 'static>(
-  vals: Vec<Value<C>>, _info: CollapsedInfo<C>, _runner: &mut Runner<C>
+  vals: Vec<Value<C>>, _info: CollapsedInfo<C>, _meta: RunMeta<C>, _runner: &mut Runner<C>
 ) -> Value<C> {
   println!("*** PRINT: {:?}", vals[0]);
   Value::Int(1)
@@ -93,7 +93,7 @@ async fn ntvt_to_json<C: CustomType + 'static>(args: Vec<Type<C>>, _globals: &Gl
 
 #[native_fn]
 async fn ntv_to_json<C: CustomType + 'static>(
-  vals: Vec<Value<C>>, info: CollapsedInfo<C>, _runner: &mut Runner<C>
+  vals: Vec<Value<C>>, info: CollapsedInfo<C>, _meta: RunMeta<C>, _runner: &mut Runner<C>
 ) -> Value<C> {
   let val = vals.into_iter().next().unwrap();
   let col_type = info.into_types().into_iter().next().unwrap();

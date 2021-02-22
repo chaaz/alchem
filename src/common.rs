@@ -1,6 +1,6 @@
 //! Common info for the parser.
 
-use crate::collapsed::{CollapsedInfo, CollapsedType};
+use crate::collapsed::{CollapsedInfo, CollapsedType, RunMeta};
 use crate::compiler::{Compiler, Destructure};
 use crate::scanner::Token;
 use crate::scope::ZeroMode;
@@ -16,8 +16,12 @@ use std::sync::{Arc, Mutex, Weak};
 const MAX_CONSTANTS: usize = 255;
 const MAX_MONOMORPHS: usize = 20;
 
-pub type Native<C> =
-  for<'r> fn(Vec<Value<C>>, CollapsedInfo<C>, &'r mut Runner<C>) -> Pin<Box<dyn Future<Output = Value<C>> + Send + 'r>>;
+pub type Native<C> = for<'r> fn(
+  Vec<Value<C>>,
+  CollapsedInfo<C>,
+  RunMeta<C>,
+  &'r mut Runner<C>
+) -> Pin<Box<dyn Future<Output = Value<C>> + Send + 'r>>;
 pub type TypeNative<C> =
   for<'r> fn(Vec<Type<C>>, &'r Globals<C>) -> Pin<Box<dyn Future<Output = MorphStatus<C>> + Send + 'r>>;
 pub type TypeMatch<C> = fn(&[Type<C>], &[Type<C>]) -> bool;
@@ -678,14 +682,14 @@ impl<C: CustomType> Constants<C> {
 
 #[derive(Debug)]
 pub struct Instr {
-  loc: usize,
+  pos: usize,
   op: Opcode
 }
 
 impl Instr {
-  pub fn new(op: Opcode, loc: usize) -> Instr { Instr { loc, op } }
-  pub fn anon(op: Opcode) -> Instr { Instr { loc: 0, op } }
-  pub fn loc(&self) -> usize { self.loc }
+  pub fn new(op: Opcode, pos: usize) -> Instr { Instr { pos, op } }
+  pub fn anon(op: Opcode) -> Instr { Instr { pos: 0, op } }
+  pub fn pos(&self) -> usize { self.pos }
   pub fn op(&self) -> &Opcode { &self.op }
   pub fn op_mut(&mut self) -> &mut Opcode { &mut self.op }
 }

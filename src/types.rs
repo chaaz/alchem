@@ -147,6 +147,11 @@ where
 
 pub trait Runtime: Clone + Send + 'static {}
 
+pub trait CustomMeta: Clone + Send + Sync + 'static {
+  fn update(&self) -> Self;
+  fn init() -> Self;
+}
+
 pub trait CustomValue: Sized + Send + fmt::Debug {
   fn shift(&mut self) -> Option<Self>;
 }
@@ -155,6 +160,7 @@ pub trait CustomType: PartialEq + Eq + IsSingle + fmt::Debug + Clone + Send + Sy
   type Collapsed: Clone + Send + Sync + fmt::Debug;
   type Value: CustomValue;
   type Runtime: Runtime;
+  type Meta: CustomMeta;
   fn collapse(&self) -> Self::Collapsed;
 }
 
@@ -171,6 +177,11 @@ impl CustomValue for NoValue {
 
 impl Runtime for () {}
 
+impl CustomMeta for () {
+  fn update(&self) {}
+  fn init() {}
+}
+
 #[derive(Clone, Debug)]
 pub enum NoCustom {}
 
@@ -178,6 +189,7 @@ impl CustomType for NoCustom {
   type Collapsed = ();
   type Value = NoValue;
   type Runtime = ();
+  type Meta = ();
 
   fn collapse(&self) {}
 }

@@ -1,6 +1,6 @@
 //! The actual VM for parsing the bytecode.
 
-use crate::collapsed::{Chunk, CollapsedInfo, Declared, FuncNative};
+use crate::collapsed::{Chunk, CollapsedInfo, Declared, FuncNative, RunMeta};
 use crate::common::{Closure, FunctionIndex, Instr, Native, ObjUpvalue, ObjUpvalues, Opcode};
 pub use crate::compiler::{collapse_script, compile, script_to_closure};
 use crate::inline::Inline;
@@ -50,7 +50,7 @@ impl<C: CustomType + 'static> Vm<C> {
       runtime: self.runtime
     };
 
-    ftr.run_closure(closure, FunctionIndex::empty(inst_ind), Vec::new()).await
+    ftr.run_closure(closure, FunctionIndex::empty(inst_ind), RunMeta::new(0), Vec::new()).await
   }
 }
 
@@ -78,24 +78,28 @@ impl<C: CustomType + 'static> Runner<C> {
     Runner { call_stack: Vec::new(), stack: Stack::new(), globals, open_upvals: OpenUpvalues::new(), runtime }
   }
 
-  pub async fn into_run_value(mut self, value: Value<C>, inst_ind: FunctionIndex, args: Vec<Value<C>>) -> Value<C> {
+  pub async fn into_run_value(
+    mut self, value: Value<C>, inst_ind: FunctionIndex, meta: RunMeta<C>, args: Vec<Value<C>>
+  ) -> Value<C> {
     match value {
-      Value::Closure(closure) => self.run_closure(closure, inst_ind, args).await,
-      Value::Native(func_native) => self.run_native(func_native, inst_ind, args).await,
+      Value::Closure(closure) => self.run_closure(closure, inst_ind, meta, args).await,
+      Value::Native(func_native) => self.run_native(func_native, inst_ind, meta, args).await,
       other => panic!("Value is not runnable: {:?}", other)
     }
   }
 
-  pub async fn run_value(&mut self, value: Value<C>, inst_ind: FunctionIndex, args: Vec<Value<C>>) -> Value<C> {
+  pub async fn run_value(
+    &mut self, value: Value<C>, inst_ind: FunctionIndex, meta: RunMeta<C>, args: Vec<Value<C>>
+  ) -> Value<C> {
     match value {
-      Value::Closure(closure) => self.run_closure(closure, inst_ind, args).await,
-      Value::Native(func_native) => self.run_native(func_native, inst_ind, args).await,
+      Value::Closure(closure) => self.run_closure(closure, inst_ind, meta, args).await,
+      Value::Native(func_native) => self.run_native(func_native, inst_ind, meta, args).await,
       other => panic!("Value is not runnable: {:?}", other)
     }
   }
 
   pub async fn run_closure(
-    &mut self, closure: Arc<Closure<C>>, inst_ind: FunctionIndex, args: Vec<Value<C>>
+    &mut self, closure: Arc<Closure<C>>, inst_ind: FunctionIndex, meta: RunMeta<C>, args: Vec<Value<C>>
   ) -> Value<C> {
     self.stack.push(closure.clone().into());
     let index = inst_ind.index();
@@ -110,20 +114,20 @@ impl<C: CustomType + 'static> Runner<C> {
     self.stack.append_vec(args);
 
     call_closure(closure, index, args_len, &mut self.stack, true).perform(&mut self.call_stack);
-    self.run_loop().await
+    self.run_loop(meta).await
   }
 
   pub async fn run_native(
-    &mut self, func_native: Arc<FuncNative<C>>, inst_ind: FunctionIndex, args: Vec<Value<C>>
+    &mut self, func_native: Arc<FuncNative<C>>, inst_ind: FunctionIndex, meta: RunMeta<C>, args: Vec<Value<C>>
   ) -> Value<C> {
     let native_info = func_native.instances()[inst_ind.index()].clone();
     let native = func_native.native();
-    (native)(args, native_info, self).await
+    (native)(args, native_info, meta, self).await
   }
 
-  async fn run_loop(&mut self) -> Value<C> {
+  async fn run_loop(&mut self, meta: RunMeta<C>) -> Value<C> {
     loop {
-      match self.run() {
+      match self.run(&meta) {
         Stopped::Native(ntv) => {
           let v = ntv.run(self).await;
           self.stack.push(v);
@@ -133,8 +137,8 @@ impl<C: CustomType + 'static> Runner<C> {
     }
   }
 
-  fn run(&mut self) -> Stopped<C> {
-    self.try_run()
+  fn run(&mut self, meta: &RunMeta<C>) -> Stopped<C> {
+    self.try_run(meta)
 
     // TODO(later): inject error handling everywhere
     //
@@ -143,7 +147,7 @@ impl<C: CustomType + 'static> Runner<C> {
     // }
   }
 
-  fn try_run(&mut self) -> Stopped<C> {
+  fn try_run(&mut self, meta: &RunMeta<C>) -> Stopped<C> {
     let Runner { call_stack, stack, globals, open_upvals, .. } = self;
 
     #[cfg(feature = "verbose")]
@@ -159,7 +163,7 @@ impl<C: CustomType + 'static> Runner<C> {
           #[cfg(feature = "verbose")]
           debug_instr(stack, *ip, instr);
           *ip += 1;
-          match handle_op(instr, globals, &mut upvals, open_upvals, chunk, slots, stack, ip) {
+          match handle_op(instr, globals, &mut upvals, open_upvals, chunk, slots, stack, ip, meta) {
             Handled::StackOp(stack_op) => {
               drop(upvals);
               let exit = stack_op.perform(call_stack);
@@ -206,19 +210,20 @@ impl<C: CustomType + 'static> Runner<C> {
 pub struct NativeRun<C: CustomType> {
   native: Native<C>,
   args: Vec<Value<C>>,
-  native_info: CollapsedInfo<C>
+  native_info: CollapsedInfo<C>,
+  meta: RunMeta<C>
 }
 
 impl<C: CustomType + 'static> NativeRun<C> {
   pub fn run<'r>(self, runner: &'r mut Runner<C>) -> Pin<Box<dyn Future<Output = Value<C>> + Send + 'r>> {
-    (self.native)(self.args, self.native_info, runner)
+    (self.native)(self.args, self.native_info, self.meta, runner)
   }
 }
 
 #[allow(clippy::too_many_arguments)]
 fn handle_op<C: CustomType + 'static>(
   instr: &Instr, globals: &Globals<C>, upvalues: &mut [ObjUpvalue<C>], open_upvals: &mut OpenUpvalues<C>,
-  chunk: &Chunk<C>, slots: &usize, stack: &mut Stack<C>, ip: &mut usize
+  chunk: &Chunk<C>, slots: &usize, stack: &mut Stack<C>, ip: &mut usize, meta: &RunMeta<C>
 ) -> Handled<C> {
   match instr.op() {
     Opcode::Lt => binary(stack, |v, w| v.op_lt(w)),
@@ -261,7 +266,9 @@ fn handle_op<C: CustomType + 'static>(
         stack[stack_len - len ..].rotate_right(1);
       }
     }
-    Opcode::Call(inst_ind, argc) => return call_value(stack, *inst_ind, *argc),
+    Opcode::Call(inst_ind, argc) => {
+      return call_value(stack, *inst_ind, *argc, meta, instr.pos());
+    }
     Opcode::Return => {
       open_upvals.close_gte(*slots, stack);
       stack.swap_remove(*slots);
@@ -431,12 +438,14 @@ impl<C: CustomType + 'static> StackOp<C> {
   }
 }
 
-fn call_value<C: CustomType + 'static>(stack: &mut Stack<C>, inst_ind: usize, argc: u8) -> Handled<C> {
+fn call_value<C: CustomType + 'static>(
+  stack: &mut Stack<C>, inst_ind: usize, argc: u8, meta: &RunMeta<C>, pos: usize
+) -> Handled<C> {
   let value = rpeek(stack, argc as usize);
 
   match value {
     Value::Closure(f) => Handled::StackOp(call_closure(f.clone(), inst_ind, argc, stack, false)),
-    Value::Native(f) => Handled::Native(call_native(f.clone(), inst_ind, argc, stack)),
+    Value::Native(f) => Handled::Native(call_native(f.clone(), inst_ind, argc, stack, meta.update(pos))),
     other => panic!("Not a function: {:?}", other)
   }
 }
@@ -450,7 +459,7 @@ fn call_closure<C: CustomType + 'static>(
 }
 
 fn call_native<C: CustomType + 'static>(
-  f: Arc<FuncNative<C>>, inst_ind: usize, argc: u8, stack: &mut Stack<C>
+  f: Arc<FuncNative<C>>, inst_ind: usize, argc: u8, stack: &mut Stack<C>, meta: RunMeta<C>
 ) -> NativeRun<C> {
   if argc != f.arity() {
     panic!("Calling arity {} with {} args.", f.arity(), argc);
@@ -465,7 +474,7 @@ fn call_native<C: CustomType + 'static>(
   args.reverse();
   stack.drop(); // once more for the native
 
-  NativeRun { native, args, native_info }
+  NativeRun { native, args, native_info, meta }
 }
 
 fn unary<C: CustomType, F: FnOnce(&Value<C>) -> Value<C>>(stack: &mut Stack<C>, f: F) {

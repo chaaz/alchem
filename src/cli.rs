@@ -1,6 +1,6 @@
 //! The command-line options for the executable.
 
-use alchem::collapsed::CollapsedInfo;
+use alchem::collapsed::{CollapsedInfo, RunMeta};
 use alchem::errors::Result;
 use alchem::value::{add_native, Globals, MorphStatus, NativeInfo, NoCustom, Type, Value};
 use alchem::vm::{Runner, Vm};
@@ -54,6 +54,7 @@ type Run = Runner<NoCustom>;
 type Tp = Type<NoCustom>;
 type Gl = Globals<NoCustom>;
 type Status = MorphStatus<NoCustom>;
+type Meta = RunMeta<NoCustom>;
 
 #[native_tfn]
 async fn ntvt_print(_args: Vec<Tp>, _globals: &Gl) -> Status {
@@ -62,7 +63,7 @@ async fn ntvt_print(_args: Vec<Tp>, _globals: &Gl) -> Status {
 }
 
 #[native_fn]
-async fn ntv_print(vals: Vec<Val>, _info: CoInfo, _runner: &mut Run) -> Val {
+async fn ntv_print(vals: Vec<Val>, _info: CoInfo, _meta: Meta, _runner: &mut Run) -> Val {
   println!("*** PRINT: {:?}", vals[0]);
   Value::Int(1)
 }
@@ -71,7 +72,7 @@ async fn ntv_print(vals: Vec<Val>, _info: CoInfo, _runner: &mut Run) -> Val {
 async fn ntvt_number(_a: Vec<Tp>, _b: &Gl) -> Status { MorphStatus::NativeCompleted(NativeInfo::new(), Type::Number) }
 
 #[native_fn]
-async fn ntv_number(_argv: Vec<Val>, _info: CoInfo, _runner: &mut Run) -> Val { Value::Int(42) }
+async fn ntv_number(_argv: Vec<Val>, _info: CoInfo, _meta: Meta, _runner: &mut Run) -> Val { Value::Int(42) }
 
 #[native_tfn]
 async fn ntvt_recall(args: Vec<Tp>, globals: &Gl) -> Status {
@@ -88,10 +89,10 @@ async fn ntvt_recall(args: Vec<Tp>, globals: &Gl) -> Status {
 }
 
 #[native_fn]
-async fn ntv_recall(vals: Vec<Val>, info: CoInfo, runner: &mut Run) -> Val {
+async fn ntv_recall(vals: Vec<Val>, info: CoInfo, meta: Meta, runner: &mut Run) -> Val {
   let f = vals[0].as_closure();
   let inst_ind = info.into_call_indexes().into_iter().next().unwrap();
-  runner.run_closure(f, inst_ind, Vec::new()).await
+  runner.run_closure(f, inst_ind, meta, Vec::new()).await
 }
 
 pub fn new_globals() -> Globals<NoCustom> { Globals::new() }

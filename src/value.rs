@@ -99,6 +99,7 @@ impl From<NoValue> for Value<NoCustom> {
 impl<C: CustomType> Value<C> {
   pub fn is_int(&self) -> bool { matches!(self, Self::Int(_)) }
   pub fn is_json(&self) -> bool { matches!(self, Self::Json(_)) }
+  pub fn is_string(&self) -> bool { matches!(self, Self::String(_)) }
 
   pub fn as_int(&self) -> i32 { pick!(self, Self::Int(v) => *v, "Not an int: {:?}") }
   pub fn as_float(&self) -> f64 { pick!(self, Self::Float(v) => *v, "Not a float: {:?}") }

@@ -1,6 +1,6 @@
 //! Some native functions for alchem testing.
 
-use alchem::collapsed::CollapsedInfo;
+use alchem::collapsed::{CollapsedInfo, RunMeta};
 use alchem::value::{add_native, add_std, CustomType, CustomValue, Globals, IsSingle, MorphStatus, NativeInfo, Type,
                     Value};
 use alchem::vm::{Runner, Vm};
@@ -28,6 +28,7 @@ impl CustomType for OneUse {
   type Collapsed = ();
   type Value = OneVal;
   type Runtime = ();
+  type Meta = ();
 
   fn collapse(&self) {}
 }
@@ -62,6 +63,7 @@ type Run = Runner<OneUse>;
 type Tp = Type<OneUse>;
 type Gl = Globals<OneUse>;
 type Status = MorphStatus<OneUse>;
+type Meta = RunMeta<OneUse>;
 
 #[native_tfn]
 async fn ntvt_u1(_args: Vec<Tp>, _globals: &Gl) -> Status {
@@ -69,7 +71,7 @@ async fn ntvt_u1(_args: Vec<Tp>, _globals: &Gl) -> Status {
 }
 
 #[native_fn]
-async fn ntv_u1(_vals: Vec<Val>, _info: CoInfo, _runner: &mut Run) -> Val { Val::Custom(OneVal) }
+async fn ntv_u1(_vals: Vec<Val>, _info: CoInfo, _meta: Meta, _runner: &mut Run) -> Val { Val::Custom(OneVal) }
 
 #[native_tfn]
 async fn ntvt_reloop(args: Vec<Tp>, globals: &Gl) -> Status {
@@ -89,12 +91,12 @@ async fn ntvt_reloop(args: Vec<Tp>, globals: &Gl) -> Status {
 }
 
 #[native_fn]
-async fn ntv_reloop(vals: Vec<Val>, info: CoInfo, runner: &mut Run) -> Val {
+async fn ntv_reloop(vals: Vec<Val>, info: CoInfo, meta: Meta, runner: &mut Run) -> Val {
   let mut vals = vals;
   let mut f = vals.remove(0);
   let inst_ind = info.into_call_indexes().into_iter().next().unwrap();
-  let _ = runner.run_value(f.shift(), inst_ind.clone(), Vec::new()).await;
-  runner.run_value(f, inst_ind, Vec::new()).await
+  let _ = runner.run_value(f.shift(), inst_ind.clone(), meta.clone(), Vec::new()).await;
+  runner.run_value(f, inst_ind, meta, Vec::new()).await
 }
 
 fn add_all_natives(globals: &mut Gl) {

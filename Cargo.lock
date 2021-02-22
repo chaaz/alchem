@@ -26,7 +26,7 @@ dependencies = [
 
 [[package]]
 name = "alchem"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "alchem-macros",
  "clap",
@@ -42,8 +42,8 @@ dependencies = [
 
 [[package]]
 name = "alchem-macros"
-version = "0.1.0"
-source = "git+https://github.com/chaaz/alchem-macros?branch=main#9e5a8d65f608dcfdebde17d1ca546c68af05bd96"
+version = "0.1.1"
+source = "git+https://github.com/chaaz/alchem-macros?branch=main#10ba49a0d8aac4dab61d9ded91801b0e6b5e766d"
 dependencies = [
  "proc-macro2",
  "quote",

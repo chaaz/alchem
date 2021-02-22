@@ -48,7 +48,7 @@ pub struct ScopeStack<C: CustomType> {
   zero: ScopeZero<C>,
   one: Option<ScopeOne<C>>,
   later: Vec<ScopeLater<C>>,
-  last_line: usize,
+  last_pos: usize,
   collector: Collector
 }
 
@@ -58,7 +58,7 @@ impl<C: CustomType + 'static> ScopeStack<C> {
       zero: ScopeZero::known(HashMap::new()),
       one: None,
       later: Vec::new(),
-      last_line: 0,
+      last_pos: 0,
       collector: Collector::new()
     }
   }
@@ -68,7 +68,7 @@ impl<C: CustomType + 'static> ScopeStack<C> {
       zero: ScopeZero::known(known_upvals),
       one: None,
       later: Vec::new(),
-      last_line: 0,
+      last_pos: 0,
       collector: Collector::new()
     }
   }
@@ -84,8 +84,8 @@ impl<C: CustomType + 'static> ScopeStack<C> {
     }
   }
 
-  pub fn last_line(&self) -> usize { self.last_line }
-  pub fn set_last_line(&mut self, last_line: usize) { self.last_line = last_line; }
+  pub fn last_pos(&self) -> usize { self.last_pos }
+  pub fn set_last_pos(&mut self, last_pos: usize) { self.last_pos = last_pos; }
 
   pub fn add_constant(&mut self, v: Declared<C>) -> usize {
     if let Some(chunk) = self.current_chunk() {
@@ -96,17 +96,17 @@ impl<C: CustomType + 'static> ScopeStack<C> {
   }
 
   pub fn emit_instr(&mut self, code: Opcode) {
-    let line = self.last_line;
+    let pos = self.last_pos;
     if let Some(chunk) = self.current_chunk() {
-      chunk.add_instr(Instr::new(code, line));
+      chunk.add_instr(Instr::new(code, pos));
     }
   }
 
   pub fn emit_value(&mut self, v: Declared<C>, vtype: Type<C>) -> Type<C> {
-    let line = self.last_line;
+    let pos = self.last_pos;
     if let Some(chunk) = self.current_chunk() {
       let cc = chunk.add_constant(v);
-      chunk.add_instr(Instr::new(Opcode::Constant(cc), line));
+      chunk.add_instr(Instr::new(Opcode::Constant(cc), pos));
       vtype
     } else {
       vtype
@@ -114,11 +114,11 @@ impl<C: CustomType + 'static> ScopeStack<C> {
   }
 
   pub fn emit_closure(&mut self, upvals: Vec<Upval>, function: Function<C>) -> Arc<Function<C>> {
-    let line = self.last_line;
+    let pos = self.last_pos;
     if let Some(chunk) = self.current_chunk() {
       let function = Arc::new(function);
       let cc = chunk.add_constant(function.clone().into());
-      chunk.add_instr(Instr::new(Opcode::Closure(cc, upvals), line));
+      chunk.add_instr(Instr::new(Opcode::Closure(cc, upvals), pos));
       function
     } else {
       panic!("Can't emit closure in nested scope.");
@@ -126,9 +126,9 @@ impl<C: CustomType + 'static> ScopeStack<C> {
   }
 
   pub fn emit_jump(&mut self, code: Opcode) -> Jump {
-    let line = self.last_line;
+    let pos = self.last_pos;
     if let Some(chunk) = self.current_chunk() {
-      chunk.add_instr(Instr::new(code, line));
+      chunk.add_instr(Instr::new(code, pos));
       chunk.code_len() - 1
     } else {
       // Just use a fake value

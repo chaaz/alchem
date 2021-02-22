@@ -8,14 +8,11 @@ pub struct Scanner<'s> {
   was_dot: bool,
   input: &'s str,
   iter: CharIndices<'s>,
-  _start: usize,
   line: usize
 }
 
 impl<'s> Scanner<'s> {
-  pub fn new(input: &'s str) -> Scanner {
-    Scanner { input, iter: input.char_indices(), _start: 0, line: 1, was_dot: false }
-  }
+  pub fn new(input: &'s str) -> Scanner { Scanner { input, iter: input.char_indices(), line: 1, was_dot: false } }
 }
 
 impl<'s> Iterator for Scanner<'s> {
@@ -53,7 +50,7 @@ impl<'s> Iterator for Scanner<'s> {
       };
       self.was_dot = token_type == TokenType::Dot;
 
-      Token::new(token_type, self.line)
+      Token::new(token_type, st)
     })
   }
 }
@@ -167,15 +164,15 @@ impl<'s> Scanner<'s> {
 
 #[derive(Debug, Clone)]
 pub struct Token {
-  line: usize,
+  pos: usize,
   token_type: TokenType
 }
 
 impl Token {
-  pub fn new(token_type: TokenType, line: usize) -> Token { Token { token_type, line } }
+  pub fn new(token_type: TokenType, pos: usize) -> Token { Token { token_type, pos } }
 
   pub fn is_error(&self) -> bool { self.token_type.is_error() }
-  pub fn line(&self) -> usize { self.line }
+  pub fn pos(&self) -> usize { self.pos }
   pub fn token_type(&self) -> &TokenType { &self.token_type }
 }
 

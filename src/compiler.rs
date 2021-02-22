@@ -131,7 +131,7 @@ where
     }
     let old = std::mem::replace(&mut self.previous, std::mem::replace(&mut self.current, next));
     self.scope.collect(old);
-    self.scope.set_last_line(self.previous.line());
+    self.scope.set_last_pos(self.previous.pos());
   }
 
   fn next_token(&mut self) -> Token {
@@ -142,7 +142,7 @@ where
         return token;
       }
     }
-    Token::new(TokenType::Eof, self.scope.last_line())
+    Token::new(TokenType::Eof, self.scope.last_pos())
   }
 
   fn error_current(&mut self, msg: &str) { error_token(&mut self.had_error, &mut self.panic_mode, &self.current, msg); }

@@ -5,7 +5,7 @@
 
 use crate::common::{Closure, FunctionIndex, Instr, MorphStatus, Native, NativeInfo};
 use crate::compiler::script_to_closure;
-use crate::types::{Array, CustomType, Object, Type};
+use crate::types::{Array, CustomMeta, CustomType, Object, Type};
 use crate::value::Value;
 use crate::{pick, pick_opt};
 use std::collections::HashMap;
@@ -190,6 +190,22 @@ impl<C: CustomType + 'static> CollapsedInfo<C> {
   pub fn into_parts(self) -> (Vec<FunctionIndex>, Vec<CollapsedType<C>>, Vec<Arc<Closure<C>>>) {
     let CollapsedInfo { call_indexes, collapsed, eval_functions } = self;
     (call_indexes, collapsed, eval_functions)
+  }
+}
+
+#[derive(Clone)]
+pub struct RunMeta<C: CustomType> {
+  pos: usize,
+  meta: C::Meta
+}
+
+impl<C: CustomType> RunMeta<C> {
+  pub fn new(pos: usize) -> RunMeta<C> { RunMeta { pos, meta: C::Meta::init() } }
+  pub fn pos(&self) -> usize { self.pos }
+
+  pub fn update(&self, pos: usize) -> RunMeta<C> {
+    let meta = self.meta.update();
+    RunMeta { pos, meta }
   }
 }
 
