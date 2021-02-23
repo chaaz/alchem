@@ -565,10 +565,10 @@ impl<C: CustomType> fmt::Debug for ObjUpvalue<C> {
 impl<C: CustomType> ObjUpvalue<C> {
   pub fn new(location: usize) -> ObjUpvalue<C> { ObjUpvalue::Open(location) }
 
-  pub fn location(&self) -> usize {
+  pub fn location(&self) -> Option<usize> {
     match self {
-      Self::Open(loc) => *loc,
-      _ => panic!("No location in closed upvalue")
+      Self::Open(loc) => Some(*loc),
+      _ => None
     }
   }
 
@@ -587,13 +587,12 @@ impl<C: CustomType> ObjUpvalue<C> {
       _ => panic!("ObjUpvalue already flipped.")
     }
   }
-}
 
-impl<C: CustomType> Clone for ObjUpvalue<C> {
-  fn clone(&self) -> ObjUpvalue<C> {
+  pub fn shift(&mut self) -> ObjUpvalue<C> {
     match self {
       Self::Open(loc) => Self::Open(*loc),
-      _ => panic!("Can't clone closed upvalue")
+      Self::Closed(v) => Self::Closed(v.shift())
+      // _ => panic!("Can't clone closed upvalue")
     }
   }
 }

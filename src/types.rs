@@ -20,6 +20,7 @@ impl<C: CustomType + Send + 'static> Default for Array<C> {
 impl<C: CustomType + Send + 'static> Array<C> {
   pub fn new() -> Array<C> { Array { types: Vec::new() } }
   pub fn types(&self) -> &[Type<C>] { &self.types }
+  pub fn into_types(self) -> Vec<Type<C>> { self.types }
   pub fn get(&self, ind: usize) -> &Type<C> { self.types.get(ind).unwrap() }
   pub fn len(&self) -> usize { self.types.len() }
   pub fn is_empty(&self) -> bool { self.types.is_empty() }
@@ -46,6 +47,16 @@ impl<C: CustomType + 'static> Object<C> {
   pub fn len(&self) -> usize { self.index.len() }
   pub fn is_empty(&self) -> bool { self.index.is_empty() }
   pub fn is_single_use(&self) -> bool { self.types.values().any(|v| v.is_single_use()) }
+
+  pub fn ordered(&self) -> impl Iterator<Item = &Type<C>> + '_ {
+    self.index.iter().map(move |k| self.types.get(k).unwrap())
+  }
+
+  pub fn into_ordered(self) -> impl Iterator<Item = Type<C>> {
+    let Object { mut types, index } = self;
+    let vec: Vec<_> = index.iter().map(|o| types.remove(o).unwrap()).collect();
+    vec.into_iter()
+  }
 
   pub fn add(&mut self, key: String, t: Type<C>) {
     self.types.insert(key, t);
@@ -220,6 +231,18 @@ impl<C: CustomType + 'static> DependsOn<C> {
   pub fn unit(i: MorphIndex<C>) -> DependsOn<C> { DependsOn::Unit(i) }
   pub fn and(self, i: DependsOn<C>) -> DependsOn<C> { DependsOn::And(Box::new(self), Box::new(i)) }
   pub fn or(self, i: DependsOn<C>) -> DependsOn<C> { DependsOn::Or(Box::new(self), Box::new(i)) }
+
+  pub fn all(mut i: impl Iterator<Item = (Arc<Function<C>>, usize)>) -> DependsOn<C> {
+    if let Some((f, ind)) = i.next() {
+      let mut d = DependsOn::func(&f, ind);
+      for (f, ind) in i {
+        d = d.and(DependsOn::func(&f, ind));
+      }
+      d
+    } else {
+      DependsOn::None
+    }
+  }
 
   pub fn is_known(&self) -> bool {
     match self {

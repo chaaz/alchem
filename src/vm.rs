@@ -281,12 +281,15 @@ fn handle_op<C: CustomType + 'static>(
     }
     Opcode::Closure(c, upvals) => {
       let val = chunk.get_constant(*c).unwrap();
+
+      // Because of natives prematurely closing upvals during capture(), some of the new_upvalues may already be
+      // closed.
       let new_upvalues: Vec<_> = upvals
         .iter()
-        .map(|v| if v.is_local() { capture_upvalue(*slots + v.index()) } else { upvalues[v.index()].clone() })
+        .map(|v| if v.is_local() { capture_upvalue(*slots + v.index()) } else { upvalues[v.index()].shift() })
         .collect();
 
-      let uv_inds: Vec<_> = new_upvalues.iter().map(|v| v.location()).collect();
+      let uv_inds: Vec<_> = new_upvalues.iter().enumerate().filter_map(|(i, v)| v.location().map(|l| (i, l))).collect();
       let closure = Arc::new(Closure::new(val.as_function(), new_upvalues));
       open_upvals.insert_opens(uv_inds, &closure);
       stack.push(closure.into());
@@ -365,8 +368,8 @@ struct OpenUpvalues<C: CustomType> {
 impl<C: CustomType + 'static> OpenUpvalues<C> {
   pub fn new() -> OpenUpvalues<C> { OpenUpvalues { per_slot: Vec::new() } }
 
-  pub fn insert_opens(&mut self, uv_inds: Vec<usize>, closure: &Arc<Closure<C>>) {
-    for (ci, uvi) in uv_inds.into_iter().enumerate() {
+  pub fn insert_opens(&mut self, uv_inds: Vec<(usize, usize)>, closure: &Arc<Closure<C>>) {
+    for (ci, uvi) in uv_inds.into_iter() {
       let ind = self.per_slot.iter().rposition(|(s, _)| s < &uvi).map(|p| p + 1).unwrap_or(0);
 
       if ind == self.per_slot.len() || self.per_slot[ind].0 > uvi {

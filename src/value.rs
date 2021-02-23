@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 pub use crate::common::{Closure, Function, FunctionIndex, Globals, MorphStatus, NativeInfo};
 pub use crate::natives::{add_std, convert_to_json};
-pub use crate::types::{Array, CustomType, CustomValue, IsSingle, NoCustom, NoValue, Object, Runtime, Type};
+pub use crate::types::{Array, CustomType, CustomValue, DependsOn, IsSingle, NoCustom, NoValue, Object, Runtime, Type};
 use crate::{pick, pick_opt};
 
 pub fn add_native<C>(globals: &mut Globals<C>, name: impl ToString, arity: u8, native: Native<C>, typen: TypeNative<C>)
