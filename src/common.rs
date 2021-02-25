@@ -591,8 +591,7 @@ impl<C: CustomType> ObjUpvalue<C> {
   pub fn shift(&mut self) -> ObjUpvalue<C> {
     match self {
       Self::Open(loc) => Self::Open(*loc),
-      Self::Closed(v) => Self::Closed(v.shift())
-      // _ => panic!("Can't clone closed upvalue")
+      Self::Closed(v) => Self::Closed(v.shift()) // _ => panic!("Can't clone closed upvalue")
     }
   }
 }

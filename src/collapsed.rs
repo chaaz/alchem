@@ -207,6 +207,12 @@ impl<C: CustomType> RunMeta<C> {
     let meta = self.meta.update();
     RunMeta { pos, meta }
   }
+
+  pub fn meta(&self) -> &C::Meta { &self.meta }
+  pub fn meta_mut(&mut self) -> &mut C::Meta { &mut self.meta }
+  pub fn set_meta(&mut self, meta: C::Meta) { self.meta = meta; }
+  pub fn into_meta(self) -> C::Meta { self.meta }
+  pub fn with_meta(&self, meta: C::Meta) -> RunMeta<C> { RunMeta { pos: self.pos, meta } }
 }
 
 pub struct Function<C: CustomType> {
