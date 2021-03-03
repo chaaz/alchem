@@ -3,14 +3,13 @@
 //! It may be helpful to think of the types defined here are the "real" types, and their equivalents in `common`
 //! and `value` as builders.
 
-use crate::common::{Closure, FunctionIndex, Instr, MorphStatus, Native, NativeInfo};
-use crate::compiler::script_to_closure;
+use crate::common::{FnType, FunctionIndex, Instr, Monomorph, MorphStatus, Native, NativeInfo};
 use crate::types::{Array, CustomMeta, CustomType, Object, Type};
-use crate::value::Value;
+use crate::value::{Closure, RunValue, Value};
 use crate::{pick, pick_opt};
 use std::collections::HashMap;
 use std::fmt;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 pub type Globals<C> = HashMap<String, Declared<C>>;
 
@@ -124,19 +123,34 @@ impl<C: CustomType + 'static> Declared<C> {
   }
 }
 
-pub fn collapse_function<C: CustomType + 'static>(f: Arc<crate::common::Function<C>>) -> Declared<C> {
-  use crate::common::FnType;
+pub fn to_run_value<C: CustomType + 'static>(script: Arc<crate::common::Function<C>>) -> RunValue<C> {
+  let f = Arc::try_unwrap(script).expect("Multiple references to script during collapse.");
+  let (fn_type, arity, morphs) = f.into_collapse();
 
-  match f.fn_type() {
-    FnType::Native(ntv, ..) => Declared::Native(Arc::new(FuncNative::from_common(*ntv, f))),
-    FnType::Alchem(..) => Declared::Function(Arc::new(Function::from_common(f)))
+  match fn_type {
+    FnType::Native(ntv, .., cap) => RunValue::Native(Arc::new(FuncNative::from_common(ntv, cap, arity, morphs))),
+    FnType::Alchem(..) => {
+      let function = Arc::new(Function::from_common(arity, morphs));
+      RunValue::Closure(Arc::new(Closure::new(function, Vec::new())))
+    }
+  }
+}
+
+pub fn collapse_function<C: CustomType + 'static>(f: Arc<crate::common::Function<C>>) -> Declared<C> {
+  let f = Arc::try_unwrap(f).expect("Multiple references to function during collapse.");
+  let (fn_type, arity, morphs) = f.into_collapse();
+
+  match fn_type {
+    FnType::Native(ntv, .., cap) => Declared::Native(Arc::new(FuncNative::from_common(ntv, cap, arity, morphs))),
+    FnType::Alchem(..) => Declared::Function(Arc::new(Function::from_common(arity, morphs)))
   }
 }
 
 pub struct FuncNative<C: CustomType> {
   arity: u8,
   native: Native<C>,
-  instances: Vec<CollapsedInfo<C>>
+  instances: Vec<CollapsedInfo<C>>,
+  captured: Mutex<Vec<Value<C>>>
 }
 
 impl<C: CustomType> fmt::Debug for FuncNative<C> {
@@ -147,9 +161,9 @@ impl<C: CustomType> fmt::Debug for FuncNative<C> {
 }
 
 impl<C: CustomType + 'static> FuncNative<C> {
-  pub fn from_common(native: Native<C>, f: Arc<crate::common::Function<C>>) -> FuncNative<C> {
-    let f = Arc::try_unwrap(f).expect("Multiple references to function during collapse.");
-    let (arity, morphs) = f.into_collapse();
+  pub fn from_common(
+    native: Native<C>, captured: Mutex<Vec<Value<C>>>, arity: u8, morphs: Vec<Monomorph<C>>
+  ) -> FuncNative<C> {
     let instances = morphs
       .into_iter()
       .map(|i| match i.into_status() {
@@ -158,38 +172,63 @@ impl<C: CustomType + 'static> FuncNative<C> {
       })
       .collect();
 
-    FuncNative { arity, native, instances }
+    FuncNative { arity, native, instances, captured }
   }
 
   pub fn arity(&self) -> u8 { self.arity }
   pub fn native(&self) -> &Native<C> { &self.native }
   pub fn instances(&self) -> &[CollapsedInfo<C>] { &self.instances }
+  pub fn captured(&self) -> &Mutex<Vec<Value<C>>> { &self.captured }
+}
+
+pub struct Captured<C: CustomType> {
+  collapsed: CollapsedInfo<C>,
+  captures: Vec<Value<C>>
+}
+
+impl<C: CustomType + 'static> Captured<C> {
+  pub fn types(&self) -> &[CollapsedType<C>] { self.collapsed.types() }
+  pub fn into_types(self) -> Vec<CollapsedType<C>> { self.collapsed.into_types() }
+  pub fn functions(&self) -> &[RunValue<C>] { self.collapsed.functions() }
+  pub fn into_functions(self) -> Vec<RunValue<C>> { self.collapsed.into_functions() }
+  pub fn call_indexes(&self) -> &[FunctionIndex] { self.collapsed.call_indexes() }
+  pub fn into_call_indexes(self) -> Vec<FunctionIndex> { self.collapsed.into_call_indexes() }
+  pub fn captures(&self) -> &[Value<C>] { &self.captures }
+  pub fn into_captures(self) -> Vec<Value<C>> { self.captures }
+
+  #[allow(clippy::type_complexity)]
+  pub fn into_parts(self) -> (Vec<FunctionIndex>, Vec<CollapsedType<C>>, Vec<RunValue<C>>, Vec<Value<C>>) {
+    let CollapsedInfo { call_indexes, collapsed, functions } = self.collapsed;
+    (call_indexes, collapsed, functions, self.captures)
+  }
 }
 
 #[derive(Clone)]
 pub struct CollapsedInfo<C: CustomType> {
   call_indexes: Vec<FunctionIndex>,
   collapsed: Vec<CollapsedType<C>>,
-  eval_functions: Vec<Arc<Closure<C>>>
+  functions: Vec<RunValue<C>>
 }
 
 impl<C: CustomType + 'static> CollapsedInfo<C> {
   pub fn from_common(i: NativeInfo<C>) -> CollapsedInfo<C> {
-    let (call_indexes, collapsed, eval_functions) = i.into_parts();
-    let eval_functions = eval_functions.into_iter().map(script_to_closure).collect();
-    CollapsedInfo { call_indexes, collapsed, eval_functions }
+    let (call_indexes, collapsed, functions) = i.into_parts();
+    let functions = functions.into_iter().map(to_run_value).collect();
+    CollapsedInfo { call_indexes, collapsed, functions }
   }
 
-  pub fn call_indexes(&self) -> &[FunctionIndex] { &self.call_indexes }
+  pub fn capture(self, captures: Vec<Value<C>>) -> Captured<C> { Captured { collapsed: self, captures } }
   pub fn types(&self) -> &[CollapsedType<C>] { &self.collapsed }
-  pub fn eval_functions(&self) -> &[Arc<Closure<C>>] { &self.eval_functions }
   pub fn into_types(self) -> Vec<CollapsedType<C>> { self.collapsed }
+  pub fn functions(&self) -> &[RunValue<C>] { &self.functions }
+  pub fn into_functions(self) -> Vec<RunValue<C>> { self.functions }
+  pub fn call_indexes(&self) -> &[FunctionIndex] { &self.call_indexes }
   pub fn into_call_indexes(self) -> Vec<FunctionIndex> { self.call_indexes }
 
   #[allow(clippy::type_complexity)]
-  pub fn into_parts(self) -> (Vec<FunctionIndex>, Vec<CollapsedType<C>>, Vec<Arc<Closure<C>>>) {
-    let CollapsedInfo { call_indexes, collapsed, eval_functions } = self;
-    (call_indexes, collapsed, eval_functions)
+  pub fn into_parts(self) -> (Vec<FunctionIndex>, Vec<CollapsedType<C>>, Vec<RunValue<C>>) {
+    let CollapsedInfo { call_indexes, collapsed, functions } = self;
+    (call_indexes, collapsed, functions)
   }
 }
 
@@ -228,9 +267,7 @@ impl<C: CustomType> fmt::Debug for Function<C> {
 }
 
 impl<C: CustomType + 'static> Function<C> {
-  pub fn from_common(f: Arc<crate::common::Function<C>>) -> Function<C> {
-    let f = Arc::try_unwrap(f).expect("Multiple references to function during collapse.");
-    let (arity, morphs) = f.into_collapse();
+  pub fn from_common(arity: u8, morphs: Vec<Monomorph<C>>) -> Function<C> {
     let instances = morphs
       .into_iter()
       .map(|i| match i.into_status() {

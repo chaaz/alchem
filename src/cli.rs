@@ -1,8 +1,8 @@
 //! The command-line options for the executable.
 
-use alchem::collapsed::{CollapsedInfo, RunMeta};
+use alchem::collapsed::{Captured, RunMeta};
 use alchem::errors::Result;
-use alchem::value::{add_native, Globals, MorphStatus, NativeInfo, NoCustom, Type, Value};
+use alchem::value::{add_native, Globals, MorphStatus, NativeInfo, NoCustom, Type, TypeCaptured, Value};
 use alchem::vm::{Runner, Vm};
 use alchem_macros::{native_fn, native_tfn};
 use clap::{crate_version, App, AppSettings, Arg, ArgMatches};
@@ -49,33 +49,36 @@ async fn run_file(input: &str) -> Result<()> {
 }
 
 type Val = Value<NoCustom>;
-type CoInfo = CollapsedInfo<NoCustom>;
+type Capd = Captured<NoCustom>;
 type Run = Runner<NoCustom>;
 type Tp = Type<NoCustom>;
 type Gl = Globals<NoCustom>;
 type Status = MorphStatus<NoCustom>;
 type Meta = RunMeta<NoCustom>;
+type Tc = TypeCaptured<NoCustom>;
 
 #[native_tfn]
-async fn ntvt_print(_args: Vec<Tp>, _globals: &Gl) -> Status {
+async fn ntvt_print(_args: Vec<Tp>, _tc: Tc, _globals: &Gl) -> Status {
   let info = NativeInfo::new();
   MorphStatus::NativeCompleted(info, Type::Number)
 }
 
 #[native_fn]
-async fn ntv_print(vals: Vec<Val>, _info: CoInfo, _meta: Meta, _runner: &mut Run) -> Val {
+async fn ntv_print(vals: Vec<Val>, _info: Capd, _meta: Meta, _runner: &mut Run) -> Val {
   println!("*** PRINT: {:?}", vals[0]);
   Value::Int(1)
 }
 
 #[native_tfn]
-async fn ntvt_number(_a: Vec<Tp>, _b: &Gl) -> Status { MorphStatus::NativeCompleted(NativeInfo::new(), Type::Number) }
+async fn ntvt_number(_a: Vec<Tp>, _tc: Tc, _b: &Gl) -> Status {
+  MorphStatus::NativeCompleted(NativeInfo::new(), Type::Number)
+}
 
 #[native_fn]
-async fn ntv_number(_argv: Vec<Val>, _info: CoInfo, _meta: Meta, _runner: &mut Run) -> Val { Value::Int(42) }
+async fn ntv_number(_argv: Vec<Val>, _info: Capd, _meta: Meta, _runner: &mut Run) -> Val { Value::Int(42) }
 
 #[native_tfn]
-async fn ntvt_recall(args: Vec<Tp>, globals: &Gl) -> Status {
+async fn ntvt_recall(args: Vec<Tp>, _tc: Tc, globals: &Gl) -> Status {
   let mut info = NativeInfo::new();
   let func = args[0].as_function().upgrade().unwrap();
   let (inst_ind, ftype) = func.clone().find_or_build(Vec::new(), globals).await;
@@ -89,10 +92,10 @@ async fn ntvt_recall(args: Vec<Tp>, globals: &Gl) -> Status {
 }
 
 #[native_fn]
-async fn ntv_recall(vals: Vec<Val>, info: CoInfo, meta: Meta, runner: &mut Run) -> Val {
-  let f = vals[0].as_closure();
+async fn ntv_recall(vals: Vec<Val>, info: Capd, meta: Meta, runner: &mut Run) -> Val {
+  let f = vals.into_iter().next().unwrap();
   let inst_ind = info.into_call_indexes().into_iter().next().unwrap();
-  runner.run_closure(f, inst_ind, meta, Vec::new()).await
+  runner.run(f, inst_ind, meta, Vec::new()).await
 }
 
 pub fn new_globals() -> Globals<NoCustom> { Globals::new() }

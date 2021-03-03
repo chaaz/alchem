@@ -1,8 +1,8 @@
 //! Some native functions for alchem testing.
 
-use alchem::collapsed::{CollapsedInfo, RunMeta};
+use alchem::collapsed::{Captured, RunMeta};
 use alchem::value::{add_native, add_std, CustomType, CustomValue, Globals, IsSingle, MorphStatus, NativeInfo, Type,
-                    Value};
+                    TypeCaptured, Value};
 use alchem::vm::{Runner, Vm};
 use alchem_macros::{native_fn, native_tfn};
 
@@ -58,23 +58,24 @@ impl Eq for OneVal {}
 
 type Val = Value<OneUse>;
 type Info = NativeInfo<OneUse>;
-type CoInfo = CollapsedInfo<OneUse>;
+type Capd = Captured<OneUse>;
 type Run = Runner<OneUse>;
 type Tp = Type<OneUse>;
 type Gl = Globals<OneUse>;
 type Status = MorphStatus<OneUse>;
 type Meta = RunMeta<OneUse>;
+type Tc = TypeCaptured<OneUse>;
 
 #[native_tfn]
-async fn ntvt_u1(_args: Vec<Tp>, _globals: &Gl) -> Status {
+async fn ntvt_u1(_args: Vec<Tp>, _tc: Tc, _globals: &Gl) -> Status {
   MorphStatus::NativeCompleted(Info::new(), Type::Custom(OneUse))
 }
 
 #[native_fn]
-async fn ntv_u1(_vals: Vec<Val>, _info: CoInfo, _meta: Meta, _runner: &mut Run) -> Val { Val::Custom(OneVal) }
+async fn ntv_u1(_vals: Vec<Val>, _info: Capd, _meta: Meta, _runner: &mut Run) -> Val { Val::Custom(OneVal) }
 
 #[native_tfn]
-async fn ntvt_reloop(args: Vec<Tp>, globals: &Gl) -> Status {
+async fn ntvt_reloop(args: Vec<Tp>, _tc: Tc, globals: &Gl) -> Status {
   assert_eq!(args.len(), 1);
   let f = args[0].as_function().upgrade().unwrap();
   assert_eq!(f.arity(), 0);
@@ -91,12 +92,12 @@ async fn ntvt_reloop(args: Vec<Tp>, globals: &Gl) -> Status {
 }
 
 #[native_fn]
-async fn ntv_reloop(vals: Vec<Val>, info: CoInfo, meta: Meta, runner: &mut Run) -> Val {
+async fn ntv_reloop(vals: Vec<Val>, info: Capd, meta: Meta, runner: &mut Run) -> Val {
   let mut vals = vals;
   let mut f = vals.remove(0);
   let inst_ind = info.into_call_indexes().into_iter().next().unwrap();
-  let _ = runner.run_value(f.shift(), inst_ind.clone(), meta.clone(), Vec::new()).await;
-  runner.run_value(f, inst_ind, meta, Vec::new()).await
+  let _ = runner.run(f.shift(), inst_ind.clone(), meta.clone(), Vec::new()).await;
+  runner.run(f, inst_ind, meta, Vec::new()).await
 }
 
 fn add_all_natives(globals: &mut Gl) {

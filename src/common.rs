@@ -1,6 +1,6 @@
 //! Common info for the parser.
 
-use crate::collapsed::{CollapsedInfo, CollapsedType, RunMeta};
+use crate::collapsed::{Captured, CollapsedType, RunMeta};
 use crate::compiler::{Compiler, Destructure};
 use crate::scanner::Token;
 use crate::scope::ZeroMode;
@@ -18,12 +18,18 @@ const MAX_MONOMORPHS: usize = 20;
 
 pub type Native<C> = for<'r> fn(
   Vec<Value<C>>,
-  CollapsedInfo<C>,
+  Captured<C>,
   RunMeta<C>,
   &'r mut Runner<C>
 ) -> Pin<Box<dyn Future<Output = Value<C>> + Send + 'r>>;
-pub type TypeNative<C> =
-  for<'r> fn(Vec<Type<C>>, &'r Globals<C>) -> Pin<Box<dyn Future<Output = MorphStatus<C>> + Send + 'r>>;
+
+pub type TypeNative<C> = for<'r> fn(
+  Vec<Type<C>>,
+  TypeCaptured<C>,
+  &'r Globals<C>
+) -> Pin<Box<dyn Future<Output = MorphStatus<C>> + Send + 'r>>;
+
+pub type TypeCaptured<C> = Vec<Type<C>>;
 pub type TypeMatch<C> = fn(&[Type<C>], &[Type<C>]) -> bool;
 pub type ObjUpvalues<C> = Mutex<Vec<ObjUpvalue<C>>>;
 pub type Globals<C> = HashMap<String, Arc<Function<C>>>;
@@ -67,29 +73,35 @@ impl<C: CustomType + 'static> Function<C> {
     Function { arity, fn_type: FnType::Alchem(param_names, code), instances: Mutex::new(Vec::new()), known_upvals }
   }
 
-  pub fn match_native(
-    arity: u8, native: Native<C>, type_native: TypeNative<C>, type_match: TypeMatch<C>
+  pub fn full_native(
+    arity: u8, native: Native<C>, type_native: TypeNative<C>, type_match: TypeMatch<C>, cap_types: Vec<Type<C>>,
+    captures: Vec<Value<C>>
   ) -> Function<C> {
     Function {
       arity,
-      fn_type: FnType::Native(native, type_native, type_match),
+      fn_type: FnType::Native(native, type_native, type_match, cap_types, Mutex::new(captures)),
       instances: Mutex::new(Vec::new()),
       known_upvals: HashMap::new()
     }
   }
 
   pub fn new_native(arity: u8, native: Native<C>, type_native: TypeNative<C>) -> Function<C> {
-    Function::match_native(arity, native, type_native, default_typematch)
+    Function::full_native(arity, native, type_native, default_typematch, Vec::new(), Vec::new())
   }
 
-  pub fn is_single_use(&self) -> bool { self.known_upvals.values().any(|(_, t)| t.is_single_use()) }
+  pub fn is_single_use(&self) -> bool {
+    match self.fn_type() {
+      FnType::Alchem(..) => self.known_upvals.values().any(|(_, t)| t.is_single_use()),
+      FnType::Native(.., ct, _) => ct.iter().any(|t| t.is_single_use())
+    }
+  }
 
-  pub fn into_collapse(self) -> (u8, Vec<Monomorph<C>>) {
+  pub fn into_collapse(self) -> (FnType<C>, u8, Vec<Monomorph<C>>) {
     let arity = match self.fn_type() {
       FnType::Native(..) => self.arity,
       FnType::Alchem(pnames, _) => pnames.iter().map(|d| d.idents_len()).sum::<usize>() as u8
     };
-    (arity, self.instances.into_inner().unwrap())
+    (self.fn_type, arity, self.instances.into_inner().unwrap())
   }
 
   pub fn fn_type(&self) -> &FnType<C> { &self.fn_type }
@@ -152,7 +164,7 @@ impl<C: CustomType + 'static> Function<C> {
 
   pub fn find_known_type(&self, args: &[Type<C>]) -> Option<(usize, Option<Type<C>>)> {
     let instances = self.instances.try_lock().unwrap();
-    if let FnType::Native(_, _, tm) = self.fn_type() {
+    if let FnType::Native(_, _, tm, ..) = self.fn_type() {
       instances.iter().enumerate().find(|(_, m)| tm(&m.args, args)).map(|(i, m)| (i, m.known_type()))
     } else {
       instances.iter().enumerate().find(|(_, m)| m.args == args).map(|(i, m)| (i, m.known_type()))
@@ -219,7 +231,7 @@ impl<C: CustomType + 'static> Function<C> {
     self.unlink_all(inst_ind);
 
     let status = match self.fn_type() {
-      FnType::Native(_, type_fn, _) => (type_fn)(args, globals).await,
+      FnType::Native(_, type_fn, _, tc, _) => (type_fn)(args, tc.clone(), globals).await,
       FnType::Alchem(pnames, code) => {
         let self_index = MorphIndex::weak(&self, inst_ind);
         let code = code.clone().into_iter();
@@ -341,15 +353,16 @@ impl FunctionIndex {
 }
 
 pub enum FnType<C: CustomType> {
-  Native(Native<C>, TypeNative<C>, TypeMatch<C>),
+  Native(Native<C>, TypeNative<C>, TypeMatch<C>, TypeCaptured<C>, Mutex<Vec<Value<C>>>),
   Alchem(Vec<Destructure>, Vec<Token>)
 }
 
 impl<C: CustomType> FnType<C> {
+  pub fn empty() -> FnType<C> { FnType::Alchem(Vec::new(), Vec::new()) }
   fn is_native(&self) -> bool { matches!(self, Self::Native(..)) }
 }
 
-fn default_typematch<C: CustomType>(t1: &[Type<C>], t2: &[Type<C>]) -> bool { t1 == t2 }
+pub fn default_typematch<C: CustomType>(t1: &[Type<C>], t2: &[Type<C>]) -> bool { t1 == t2 }
 
 pub struct Monomorph<C: CustomType> {
   args: Vec<Type<C>>,
@@ -368,6 +381,17 @@ impl<C: CustomType + 'static> Monomorph<C> {
       build_dependencies: Vec::new(),
       build_dependents: Vec::new(),
       type_dependencies: DependsOn::None,
+      type_dependents: Vec::new()
+    }
+  }
+
+  pub fn scripted(chunk: Chunk<C>, stype: Type<C>) -> Monomorph<C> {
+    Monomorph {
+      args: Vec::new(),
+      status: MorphStatus::Completed(chunk, stype),
+      build_dependencies: Vec::new(),
+      type_dependencies: DependsOn::None,
+      build_dependents: Vec::new(),
       type_dependents: Vec::new()
     }
   }
@@ -405,7 +429,7 @@ impl<C: CustomType + 'static> MorphStatus<C> {
 pub struct NativeInfo<C: CustomType> {
   call_indexes: Vec<FunctionIndex>,
   collapsed: Vec<CollapsedType<C>>,
-  eval_functions: Vec<Arc<Function<C>>>
+  functions: Vec<Arc<Function<C>>>
 }
 
 impl<C: CustomType> Default for NativeInfo<C> {
@@ -414,17 +438,17 @@ impl<C: CustomType> Default for NativeInfo<C> {
 
 impl<C: CustomType> NativeInfo<C> {
   pub fn new() -> NativeInfo<C> {
-    NativeInfo { call_indexes: Vec::new(), collapsed: Vec::new(), eval_functions: Vec::new() }
+    NativeInfo { call_indexes: Vec::new(), collapsed: Vec::new(), functions: Vec::new() }
   }
 
   pub fn add_call_index(&mut self, ci: FunctionIndex) { self.call_indexes.push(ci); }
   pub fn add_type(&mut self, t: CollapsedType<C>) { self.collapsed.push(t); }
-  pub fn add_eval_function(&mut self, t: Arc<Function<C>>) { self.eval_functions.push(t); }
+  pub fn add_function(&mut self, f: Arc<Function<C>>) { self.functions.push(f); }
 
   #[allow(clippy::type_complexity)]
   pub fn into_parts(self) -> (Vec<FunctionIndex>, Vec<CollapsedType<C>>, Vec<Arc<Function<C>>>) {
-    let NativeInfo { call_indexes, collapsed, eval_functions } = self;
-    (call_indexes, collapsed, eval_functions)
+    let NativeInfo { call_indexes, collapsed, functions } = self;
+    (call_indexes, collapsed, functions)
   }
 }
 

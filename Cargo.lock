@@ -43,7 +43,6 @@ dependencies = [
 [[package]]
 name = "alchem-macros"
 version = "0.1.1"
-source = "git+https://github.com/chaaz/alchem-macros?branch=main#10ba49a0d8aac4dab61d9ded91801b0e6b5e766d"
 dependencies = [
  "proc-macro2",
  "quote",

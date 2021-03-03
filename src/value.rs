@@ -7,7 +7,8 @@ use std::fmt;
 use std::mem;
 use std::sync::Arc;
 
-pub use crate::common::{Closure, Function, FunctionIndex, Globals, MorphStatus, NativeInfo};
+pub use crate::common::{default_typematch, Closure, Function, FunctionIndex, Globals, MorphStatus, NativeInfo,
+                        TypeCaptured};
 pub use crate::natives::{add_std, convert_to_json};
 pub use crate::types::{Array, CustomMeta, CustomType, CustomValue, DependsOn, IsSingle, NoCustom, NoValue, Object,
                        Runtime, Type};
@@ -22,13 +23,53 @@ where
 }
 
 pub fn match_native<C>(
-  globals: &mut Globals<C>, name: impl ToString, arity: u8, native: Native<C>, typen: TypeNative<C>,
+  globals: &mut Globals<C>, name: impl ToString, arity: u8, native: Native<C>, type_native: TypeNative<C>,
   type_match: TypeMatch<C>
 ) where
   C: CustomType + 'static
 {
-  let function = Function::match_native(arity, native, typen, type_match);
+  let function = Function::full_native(arity, native, type_native, type_match, Vec::new(), Vec::new());
   globals.insert(name.to_string(), Arc::new(function));
+}
+
+pub fn capture_native<C>(
+  globals: &mut Globals<C>, name: impl ToString, arity: u8, native: Native<C>, type_native: TypeNative<C>,
+  cap_types: Vec<Type<C>>, captures: Vec<Value<C>>
+) where
+  C: CustomType + 'static
+{
+  let function = Function::full_native(arity, native, type_native, default_typematch, cap_types, captures);
+  globals.insert(name.to_string(), Arc::new(function));
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn full_native<C>(
+  globals: &mut Globals<C>, name: impl ToString, arity: u8, native: Native<C>, type_native: TypeNative<C>,
+  type_match: TypeMatch<C>, cap_types: Vec<Type<C>>, captures: Vec<Value<C>>
+) where
+  C: CustomType + 'static
+{
+  let function = Function::full_native(arity, native, type_native, type_match, cap_types, captures);
+  globals.insert(name.to_string(), Arc::new(function));
+}
+
+#[derive(Clone)]
+pub enum RunValue<C: CustomType> {
+  Closure(Arc<Closure<C>>),
+  Native(Arc<FuncNative<C>>)
+}
+
+impl<C: CustomType> From<Arc<Closure<C>>> for RunValue<C> {
+  fn from(v: Arc<Closure<C>>) -> RunValue<C> { RunValue::Closure(v) }
+}
+
+impl<C: CustomType> RunValue<C> {
+  pub fn into_value(self) -> Value<C> {
+    match self {
+      Self::Closure(v) => Value::Closure(v),
+      Self::Native(v) => Value::Native(v)
+    }
+  }
 }
 
 pub enum Value<C: CustomType> {
@@ -87,6 +128,10 @@ impl<C: CustomType> From<Closure<C>> for Value<C> {
 
 impl<C: CustomType> From<Arc<Closure<C>>> for Value<C> {
   fn from(v: Arc<Closure<C>>) -> Value<C> { Value::Closure(v) }
+}
+
+impl<C: CustomType> From<Arc<FuncNative<C>>> for Value<C> {
+  fn from(v: Arc<FuncNative<C>>) -> Value<C> { Value::Native(v) }
 }
 
 impl<C: CustomType> From<Json> for Value<C> {

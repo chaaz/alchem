@@ -1,7 +1,7 @@
 //! Some natives to add to the standard Alchem compile/runtime.
 
-use crate::collapsed::{CollapsedInfo, CollapsedType, RunMeta};
-use crate::common::FunctionIndex;
+use crate::collapsed::{Captured, CollapsedType, RunMeta};
+use crate::common::{FunctionIndex, TypeCaptured};
 use crate::value::{add_native, match_native, CustomType, Function, Globals, MorphStatus, NativeInfo, Type, Value};
 use crate::vm::{compile, Runner};
 use alchem_macros::{native_fn, native_tfn};
@@ -16,14 +16,16 @@ pub fn add_std<C: CustomType + 'static>(globals: &mut Globals<C>) {
 }
 
 #[native_tfn]
-async fn ntvt_show<C: CustomType + 'static>(args: Vec<Type<C>>, _globals: &Globals<C>) -> MorphStatus<C> {
+async fn ntvt_show<C: CustomType + 'static>(
+  args: Vec<Type<C>>, _tc: TypeCaptured<C>, _globals: &Globals<C>
+) -> MorphStatus<C> {
   assert!(args[0].is_string() || args[0].is_number() || args[0].is_bool() || args[0].is_json());
   MorphStatus::NativeCompleted(NativeInfo::new(), Type::String(None))
 }
 
 #[native_fn]
 async fn ntv_show<C: CustomType + 'static>(
-  vals: Vec<Value<C>>, _info: CollapsedInfo<C>, _meta: RunMeta<C>, _runner: &mut Runner<C>
+  vals: Vec<Value<C>>, _info: Captured<C>, _meta: RunMeta<C>, _runner: &mut Runner<C>
 ) -> Value<C> {
   let mut vals = vals.into_iter();
   let val = vals.next().unwrap();
@@ -50,41 +52,47 @@ fn ntvm_eval<C: CustomType + 'static>(a1: &[Type<C>], a2: &[Type<C>]) -> bool {
 }
 
 #[native_tfn]
-async fn ntvt_eval<C: CustomType + 'static>(args: Vec<Type<C>>, globals: &Globals<C>) -> MorphStatus<C> {
+async fn ntvt_eval<C: CustomType + 'static>(
+  args: Vec<Type<C>>, _tc: TypeCaptured<C>, globals: &Globals<C>
+) -> MorphStatus<C> {
   let code = args[0].as_string().as_deref().expect("Eval argument must be a literal string.");
   let (scope, stype) = compile(code, &globals).await;
   let chunk = scope.into_chunk();
   let function = Function::script(chunk, stype.clone());
 
   let mut info = NativeInfo::new();
-  info.add_eval_function(Arc::new(function));
+  info.add_function(Arc::new(function));
   MorphStatus::NativeCompleted(info, stype)
 }
 
 #[native_fn]
 async fn ntv_eval<C: CustomType + 'static>(
-  _vals: Vec<Value<C>>, info: CollapsedInfo<C>, meta: RunMeta<C>, runner: &mut Runner<C>
+  _vals: Vec<Value<C>>, info: Captured<C>, meta: RunMeta<C>, runner: &mut Runner<C>
 ) -> Value<C> {
-  let closure = info.eval_functions()[0].clone();
-  runner.run_closure(closure, FunctionIndex::empty(0), meta, Vec::new()).await
+  let f = info.into_functions().into_iter().next().unwrap();
+  runner.run(f.into_value(), FunctionIndex::empty(0), meta, Vec::new()).await
 }
 
 #[native_tfn]
-async fn ntvt_print<C: CustomType + 'static>(_args: Vec<Type<C>>, _globals: &Globals<C>) -> MorphStatus<C> {
+async fn ntvt_print<C: CustomType + 'static>(
+  _args: Vec<Type<C>>, _tc: TypeCaptured<C>, _globals: &Globals<C>
+) -> MorphStatus<C> {
   let info = NativeInfo::new();
   MorphStatus::NativeCompleted(info, Type::Number)
 }
 
 #[native_fn]
 async fn ntv_print<C: CustomType + 'static>(
-  vals: Vec<Value<C>>, _info: CollapsedInfo<C>, _meta: RunMeta<C>, _runner: &mut Runner<C>
+  vals: Vec<Value<C>>, _info: Captured<C>, _meta: RunMeta<C>, _runner: &mut Runner<C>
 ) -> Value<C> {
   println!("*** PRINT: {:?}", vals[0]);
   Value::Int(1)
 }
 
 #[native_tfn]
-async fn ntvt_to_json<C: CustomType + 'static>(args: Vec<Type<C>>, _globals: &Globals<C>) -> MorphStatus<C> {
+async fn ntvt_to_json<C: CustomType + 'static>(
+  args: Vec<Type<C>>, _tc: TypeCaptured<C>, _globals: &Globals<C>
+) -> MorphStatus<C> {
   let mut info = NativeInfo::new();
   assert_eq!(args.len(), 1);
   info.add_type(CollapsedType::from_common(&args[0]));
@@ -93,7 +101,7 @@ async fn ntvt_to_json<C: CustomType + 'static>(args: Vec<Type<C>>, _globals: &Gl
 
 #[native_fn]
 async fn ntv_to_json<C: CustomType + 'static>(
-  vals: Vec<Value<C>>, info: CollapsedInfo<C>, _meta: RunMeta<C>, _runner: &mut Runner<C>
+  vals: Vec<Value<C>>, info: Captured<C>, _meta: RunMeta<C>, _runner: &mut Runner<C>
 ) -> Value<C> {
   let val = vals.into_iter().next().unwrap();
   let col_type = info.into_types().into_iter().next().unwrap();
