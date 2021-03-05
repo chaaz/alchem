@@ -2,6 +2,7 @@
 
 mod natives;
 pub mod singles;
+pub mod total;
 
 use alchem::value::{Globals, NoCustom};
 use alchem::vm::Vm;

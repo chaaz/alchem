@@ -53,7 +53,7 @@ pub fn full_native<C>(
   globals.insert(name.to_string(), Arc::new(function));
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum RunValue<C: CustomType> {
   Closure(Arc<Closure<C>>),
   Native(Arc<FuncNative<C>>)
@@ -70,6 +70,9 @@ impl<C: CustomType> RunValue<C> {
       Self::Native(v) => Value::Native(v)
     }
   }
+
+  pub fn as_native(&self) -> &Arc<FuncNative<C>> { pick!(self, Self::Native(v) => v, "Not native: {:?}") }
+  pub fn set_native_captured(&self, caps: Vec<Value<C>>) { *self.as_native().captured().try_lock().unwrap() = caps; }
 }
 
 pub enum Value<C: CustomType> {

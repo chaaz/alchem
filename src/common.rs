@@ -89,6 +89,17 @@ impl<C: CustomType + 'static> Function<C> {
     Function::full_native(arity, native, type_native, default_typematch, Vec::new(), Vec::new())
   }
 
+  pub fn capture_native(
+    arity: u8, native: Native<C>, type_native: TypeNative<C>, cap_types: Vec<Type<C>>, captures: Vec<Value<C>>
+  ) -> Function<C> {
+    Function {
+      arity,
+      fn_type: FnType::Native(native, type_native, default_typematch, cap_types, Mutex::new(captures)),
+      instances: Mutex::new(Vec::new()),
+      known_upvals: HashMap::new()
+    }
+  }
+
   pub fn is_single_use(&self) -> bool {
     match self.fn_type() {
       FnType::Alchem(..) => self.known_upvals.values().any(|(_, t)| t.is_single_use()),

@@ -8,6 +8,7 @@
 mod util;
 
 use util::expect_i32;
+use util::total::expect_total_i32;
 
 #[tokio::test]
 async fn fourty_two() { expect_i32("=fourty_two()", 42).await; }
@@ -29,3 +30,6 @@ async fn full_ffi() { expect_i32("f=fn(){=fourty_two()}; f2=fn(){=recall(f)}; =f
 
 #[tokio::test]
 async fn native_args() { expect_i32("f=fn(a){=a+1}; =recall_1(f, 2)", 3).await; }
+
+#[tokio::test]
+async fn total_native() { expect_total_i32("f=fn(){=1};=make_run(f)", 1).await; }
