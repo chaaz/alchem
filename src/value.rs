@@ -149,6 +149,8 @@ impl<C: CustomType> Value<C> {
   pub fn is_int(&self) -> bool { matches!(self, Self::Int(_)) }
   pub fn is_json(&self) -> bool { matches!(self, Self::Json(_)) }
   pub fn is_string(&self) -> bool { matches!(self, Self::String(_)) }
+  pub fn is_a_function(&self) -> bool { matches!(self, Self::Closure(_) | Self::Native(_)) }
+  pub fn is_array(&self) -> bool { matches!(self, Self::Array(_)) }
 
   pub fn as_int(&self) -> i32 { pick!(self, Self::Int(v) => *v, "Not an int: {:?}") }
   pub fn as_float(&self) -> f64 { pick!(self, Self::Float(v) => *v, "Not a float: {:?}") }
@@ -194,6 +196,14 @@ impl<C: CustomType> Value<C> {
       Value::Json(v) => Self::Json(v),
       Value::Custom(v) => panic!("Is custom somehow: {:?}", v),
       Value::Void => Self::Void
+    }
+  }
+
+  pub fn into_run_value(self) -> RunValue<C> {
+    match self {
+      Self::Closure(v) => RunValue::Closure(v),
+      Self::Native(v) => RunValue::Native(v),
+      other => panic!("Not a run value: {:?}", other)
     }
   }
 

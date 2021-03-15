@@ -54,6 +54,38 @@ impl<C: CustomType + 'static> Vm<C> {
   }
 }
 
+#[derive(Clone)]
+pub struct RunnerFresh<C: CustomType> {
+  globals: Globals<C>,
+  runtime: C::Runtime
+}
+
+impl<C: CustomType> RunnerFresh<C> {
+  pub fn new(globals: Globals<C>, runtime: C::Runtime) -> RunnerFresh<C> { RunnerFresh { globals, runtime } }
+
+  pub fn to_runner(&self) -> Runner<C> { self.clone().into_runner() }
+
+  pub fn into_runner(self) -> Runner<C> {
+    Runner {
+      call_stack: Vec::new(),
+      stack: Stack::new(),
+      globals: self.globals,
+      open_upvals: OpenUpvalues::new(),
+      runtime: self.runtime
+    }
+  }
+
+  pub async fn run(&self, value: Value<C>, inst_ind: FunctionIndex, meta: RunMeta<C>, args: Vec<Value<C>>) -> Value<C> {
+    self.clone().into_run(value, inst_ind, meta, args).await
+  }
+
+  pub async fn into_run(
+    self, value: Value<C>, inst_ind: FunctionIndex, meta: RunMeta<C>, args: Vec<Value<C>>
+  ) -> Value<C> {
+    self.into_runner().into_run(value, inst_ind, meta, args).await
+  }
+}
+
 pub struct Runner<C: CustomType> {
   call_stack: CallStack<C>,
   stack: Stack<C>,
@@ -72,6 +104,11 @@ impl<C: CustomType + 'static> Runner<C> {
       open_upvals: OpenUpvalues::new(),
       runtime: self.runtime.clone()
     }
+  }
+
+  pub fn capture_fresh(&mut self) -> RunnerFresh<C> {
+    self.open_upvals.close_gte(0, &mut self.stack);
+    RunnerFresh { globals: self.globals.clone(), runtime: self.runtime.clone() }
   }
 
   pub fn fresh(globals: Globals<C>, runtime: C::Runtime) -> Runner<C> {

@@ -1,8 +1,8 @@
 //! Some functions for testing some complex native function scenarios.
 
 use alchem::collapsed::{Captured, RunMeta};
-use alchem::value::{Closure, NoCustom, Function, FunctionIndex, Globals, MorphStatus, NativeInfo, Type, Value,
-                    TypeCaptured, add_std, add_native};
+use alchem::value::{add_native, add_std, Closure, Function, FunctionIndex, Globals, MorphStatus, NativeInfo, NoCustom,
+                    Type, TypeCaptured, Value};
 use alchem::vm::{collapse_script, compile, Runner};
 use alchem_macros::{native_fn, native_tfn};
 use std::sync::Arc;
