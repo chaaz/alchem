@@ -54,8 +54,7 @@ impl<C: CustomType + 'static> Object<C> {
 
   pub fn into_ordered(self) -> impl Iterator<Item = Type<C>> {
     let Object { mut types, index } = self;
-    let vec: Vec<_> = index.iter().map(|o| types.remove(o).unwrap()).collect();
-    vec.into_iter()
+    index.into_iter().map(move |o| types.remove(&o).unwrap())
   }
 
   pub fn add(&mut self, key: String, t: Type<C>) {

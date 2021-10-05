@@ -117,7 +117,7 @@ impl<'s> Scanner<'s> {
   }
 
   fn next_string(&mut self, open: usize) -> TokenType {
-    while let Some((i, c)) = self.iter.next() {
+    for (i, c) in &mut self.iter {
       if c == '"' {
         return TokenType::StringLit(self.input[open + 1 .. i].to_string());
       } else if c == '\n' {

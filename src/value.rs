@@ -77,7 +77,7 @@ impl<C: CustomType> RunValue<C> {
 
 pub enum Value<C: CustomType> {
   Float(f64),
-  Int(i32),
+  Int(i64),
   Bool(bool),
   String(Arc<str>),
   Array(Vec<Value<C>>),
@@ -105,8 +105,8 @@ impl<C: CustomType> fmt::Debug for Value<C> {
   }
 }
 
-impl<C: CustomType> From<i32> for Value<C> {
-  fn from(v: i32) -> Value<C> { Value::Int(v) }
+impl<C: CustomType> From<i64> for Value<C> {
+  fn from(v: i64) -> Value<C> { Value::Int(v) }
 }
 
 impl<C: CustomType> From<f64> for Value<C> {
@@ -152,7 +152,7 @@ impl<C: CustomType> Value<C> {
   pub fn is_a_function(&self) -> bool { matches!(self, Self::Closure(_) | Self::Native(_)) }
   pub fn is_array(&self) -> bool { matches!(self, Self::Array(_)) }
 
-  pub fn as_int(&self) -> i32 { pick!(self, Self::Int(v) => *v, "Not an int: {:?}") }
+  pub fn as_int(&self) -> i64 { pick!(self, Self::Int(v) => *v, "Not an int: {:?}") }
   pub fn as_float(&self) -> f64 { pick!(self, Self::Float(v) => *v, "Not a float: {:?}") }
   pub fn as_str(&self) -> &str { pick!(self, Self::String(v) => v, "Not a string: {:?}") }
   pub fn as_array(&self) -> &[Value<C>] { pick!(self, Self::Array(v) => v, "Not an array: {:?}") }
@@ -481,7 +481,7 @@ impl<C: CustomType> Value<C> {
 
 pub enum Declared<C: CustomType> {
   Float(f64),
-  Int(i32),
+  Int(i64),
   Bool(bool),
   String(Arc<str>),
   Function(Arc<Function<C>>)
@@ -499,8 +499,8 @@ impl<C: CustomType> fmt::Debug for Declared<C> {
   }
 }
 
-impl<C: CustomType> From<i32> for Declared<C> {
-  fn from(v: i32) -> Declared<C> { Declared::Int(v) }
+impl<C: CustomType> From<i64> for Declared<C> {
+  fn from(v: i64) -> Declared<C> { Declared::Int(v) }
 }
 
 impl<C: CustomType> From<f64> for Declared<C> {

@@ -2,7 +2,7 @@
 
 mod util;
 
-use util::expect_i32;
+use util::expect_i64;
 
 #[tokio::test]
-async fn double_slash() { expect_i32("// comment\n=1", 1).await; }
+async fn double_slash() { expect_i64("// comment\n=1", 1).await; }

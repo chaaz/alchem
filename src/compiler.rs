@@ -365,7 +365,7 @@ where
     }
 
     match self.previous.token_type() {
-      TokenType::IntLit(v) => emit_value!(v, i32, Type::Number),
+      TokenType::IntLit(v) => emit_value!(v, i64, Type::Number),
       TokenType::FloatLit(v) => emit_value!(v, f64, Type::Number),
       TokenType::TrueLit => self.emit_value(Declared::Bool(true), Type::Bool),
       TokenType::FalseLit => self.emit_value(Declared::Bool(false), Type::Bool),

@@ -16,7 +16,7 @@ pub async fn expect_bool(script: &str, expected: bool) {
 }
 
 #[allow(dead_code)]
-pub async fn expect_i32(script: &str, expected: i32) {
+pub async fn expect_i64(script: &str, expected: i64) {
   assert_eq!(Vm::new(()).interpret(script, globals()).await.as_int(), expected);
 }
 

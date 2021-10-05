@@ -71,7 +71,7 @@ impl<C: CustomType + 'static> CollapsedType<C> {
 #[derive(Clone)]
 pub enum Declared<C: CustomType> {
   Float(f64),
-  Int(i32),
+  Int(i64),
   Bool(bool),
   String(Arc<str>),
   Function(Arc<Function<C>>),

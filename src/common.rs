@@ -299,8 +299,8 @@ impl<C: CustomType + 'static> Function<C> {
       morph.set_status(status);
 
       if old_type.is_none() && new_type.is_some() {
-        let type_deps = std::mem::replace(morph.type_dependents_mut(), Vec::new());
-        let build_deps = std::mem::replace(morph.build_dependents_mut(), Vec::new());
+        let type_deps = std::mem::take(morph.type_dependents_mut());
+        let build_deps = std::mem::take(morph.build_dependents_mut());
         Some((type_deps, build_deps))
       } else {
         None

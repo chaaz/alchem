@@ -56,7 +56,7 @@ async fn ntvt_eval<C: CustomType + 'static>(
   args: Vec<Type<C>>, _tc: TypeCaptured<C>, globals: &Globals<C>
 ) -> MorphStatus<C> {
   let code = args[0].as_string().as_deref().expect("Eval argument must be a literal string.");
-  let (scope, stype) = compile(code, &globals).await;
+  let (scope, stype) = compile(code, globals).await;
   let chunk = scope.into_chunk();
   let function = Function::script(chunk, stype.clone());
 

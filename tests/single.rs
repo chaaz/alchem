@@ -3,7 +3,7 @@
 
 mod util;
 
-use util::singles::{expect_i32, expect_u1};
+use util::singles::{expect_i64, expect_u1};
 
 #[tokio::test]
 async fn single_succ() { expect_u1(r#"a=u1();b=a;=b"#).await; }
@@ -15,7 +15,7 @@ async fn if_else() { expect_u1(r#"a=u1();=if true {=a} else {=a}"#).await; }
 async fn nest_if_else() { expect_u1(r#"a=u1();=if true {=if true {=a} else {=a}} else {=a}"#).await; }
 
 #[tokio::test]
-async fn double_succ() { expect_i32("a=1;b=a;c=a;=c", 1).await; }
+async fn double_succ() { expect_i64("a=1;b=a;c=a;=c", 1).await; }
 
 #[tokio::test]
 #[should_panic]
@@ -25,7 +25,7 @@ async fn double_fail() { expect_u1(r#"a=u1();b=a;c=a;=c"#).await; }
 async fn fn_param_succ() { expect_u1(r#"a=u1();b=u1();f=fn(x){=x};g=f(a);=f(b)"#).await; }
 
 #[tokio::test]
-async fn fn_reuse_succ() { expect_i32("f=fn(x){a=x;=x};=f(1)", 1).await; }
+async fn fn_reuse_succ() { expect_i64("f=fn(x){a=x;=x};=f(1)", 1).await; }
 
 #[tokio::test]
 #[should_panic]
@@ -47,14 +47,14 @@ async fn capture_fail2() { expect_u1(r#"a=u1();f=fn(){=a};g=f();=f()"#).await; }
 async fn object_fail() { expect_u1(r#"a={a:u1()};b=a;=a.a"#).await; }
 
 #[tokio::test]
-async fn array_succ() { expect_i32("a=[1];b=a;=a.0", 1).await; }
+async fn array_succ() { expect_i64("a=[1];b=a;=a.0", 1).await; }
 
 #[tokio::test]
 #[should_panic]
 async fn array_fail() { expect_u1(r#"a=[u1()];b=a;=a.0"#).await; }
 
 #[tokio::test]
-async fn native_succ() { expect_i32(r#"a=1;f=fn(){=a};=reloop(f)"#, 1).await; }
+async fn native_succ() { expect_i64(r#"a=1;f=fn(){=a};=reloop(f)"#, 1).await; }
 
 #[tokio::test]
 #[should_panic]

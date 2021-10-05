@@ -23,7 +23,7 @@ pub fn add_all_natives(globals: &mut Gl) {
 }
 
 #[allow(dead_code)]
-pub async fn expect_total_i32(script: &str, expected: i32) {
+pub async fn expect_total_i64(script: &str, expected: i64) {
   // Globals
   let mut globals = Globals::new();
   add_all_natives(&mut globals);

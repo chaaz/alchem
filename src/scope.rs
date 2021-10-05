@@ -40,7 +40,7 @@ impl Collector {
   pub fn report(&mut self) -> Vec<Token> {
     self.collecting = false;
     self.skipped = false;
-    std::mem::replace(&mut self.tokens, Vec::new())
+    std::mem::take(&mut self.tokens)
   }
 }
 

@@ -7,7 +7,7 @@ use alchem::vm::{Runner, Vm};
 use alchem_macros::{native_fn, native_tfn};
 
 #[allow(dead_code)]
-pub async fn expect_i32(script: &str, expected: i32) {
+pub async fn expect_i64(script: &str, expected: i64) {
   assert_eq!(Vm::new(()).interpret(script, globals()).await.as_int(), expected);
 }
 
