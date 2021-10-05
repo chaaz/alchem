@@ -111,7 +111,7 @@ async fn ntv_to_json<C: CustomType + 'static>(
 pub fn convert_to_json<C: CustomType + 'static>(val: Value<C>, t: CollapsedType<C>) -> Json {
   match val {
     Value::Float(v) => Json::Number(Number::from_f64(v).unwrap()),
-    Value::Int(v) => Json::Number(Number::from_f64(v as f64).unwrap()),
+    Value::Int(v) => Json::Number(v.into()),
     Value::Bool(v) => Json::Bool(v),
     Value::String(v) => Json::String(v.to_string()),
     Value::Array(v) => match t {
